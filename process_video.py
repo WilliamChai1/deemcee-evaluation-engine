@@ -4,13 +4,12 @@ import requests
 import json
 import time
 from PIL import Image
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & SETUP
 # ==========================================
-# Pulls securely from GitHub Secrets now!
+# Safely pulls your AQ. key from GitHub Secrets
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd"
@@ -44,24 +43,34 @@ def search_drive_file(name, parent_id):
     files = res.get("files", [])
     return files[0]["id"] if files else None
 
+def get_first_image_in_folder(folder_id):
+    """Finds ANY image file inside a specific folder, regardless of name."""
+    query = f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false"
+    url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=files(id)"
+    res = requests.get(url, headers=headers).json()
+    files = res.get("files", [])
+    return files[0]["id"] if files else None
+
 def get_theme_background_file_id(theme_name, folder_id):
-    file_id = search_drive_file(theme_name, folder_id)
-    if file_id:
-        url = f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=id,mimeType"
+    # 1. Search for Theme Folder
+    folder_id_match = search_drive_file(theme_name, folder_id)
+    if folder_id_match:
+        url = f"https://www.googleapis.com/drive/v3/files/{folder_id_match}?fields=id,mimeType"
         meta = requests.get(url, headers=headers).json()
         if meta.get("mimeType") == "application/vnd.google-apps.folder":
-            sub_file = search_drive_file(".png", file_id) or search_drive_file(".jpg", file_id)
-            if sub_file: return sub_file
+            img_id = get_first_image_in_folder(folder_id_match)
+            if img_id: return img_id
         else:
-            return file_id
+            return folder_id_match
 
+    # 2. Fallback to Default Folder
     default_id = search_drive_file("default", folder_id)
     if default_id:
         url = f"https://www.googleapis.com/drive/v3/files/{default_id}?fields=id,mimeType"
         meta = requests.get(url, headers=headers).json()
         if meta.get("mimeType") == "application/vnd.google-apps.folder":
-            sub_file = search_drive_file(".png", default_id) or search_drive_file(".jpg", default_id)
-            if sub_file: return sub_file
+            img_id = get_first_image_in_folder(default_id)
+            if img_id: return img_id
         else:
             return default_id
 
@@ -88,19 +97,20 @@ def download_google_doc_text(file_id):
     return "Please write an encouraging social media caption."
 
 # ==========================================
-# 3. GEMINI AI EVALUATION (WITH FAILOVER)
+# 3. GEMINI AI EVALUATION (LEGACY SDK)
 # ==========================================
 def evaluate_video(video_path):
     log("🧠 Starting Gemini AI Evaluation...")
+    genai.configure(api_key=GEMINI_API_KEY)
+    
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
         log("☁️ Uploading video to Gemini...")
-        video_file = client.files.upload(file=video_path)
+        video_file = genai.upload_file(path=video_path)
         
         while video_file.state.name == "PROCESSING":
             log("⏳ Waiting for Gemini to process video...")
             time.sleep(10)
-            video_file = client.files.get(name=video_file.name)
+            video_file = genai.get_file(video_file.name)
             
         if video_file.state.name == "FAILED":
             raise Exception("Gemini video processing failed.")
@@ -149,11 +159,13 @@ Respond strictly in valid JSON format matching:
         for attempt in range(1, max_retries_per_model + 1):
             try:
                 log(f"🤖 Generation Attempt {attempt}/{max_retries_per_model}...")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[video_file, "Watch this video and evaluate the student's performance."],
-                    config=types.GenerateContentConfig(
-                        system_instruction=prompt,
+                model = genai.GenerativeModel(
+                    model_name=model_name,
+                    system_instruction=prompt
+                )
+                response = model.generate_content(
+                    [video_file, "Watch this video and evaluate the student's performance."],
+                    generation_config=genai.types.GenerationConfig(
                         response_mime_type="application/json",
                         temperature=0.2
                     )
