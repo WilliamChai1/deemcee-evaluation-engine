@@ -3,24 +3,21 @@ import subprocess
 import requests
 import json
 import time
+import sys
 from PIL import Image
 from google import genai
 from google.genai import types
 
-def log(msg):
-    print(msg, flush=True)
-
 # ==========================================
-# 1. ENVIRONMENT VARIABLES & SETTINGS
+# 1. ENVIRONMENT VARIABLES & SETUP
 # ==========================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# 🚨 UPDATE THESE WITH YOUR NEW PIPELINE 2.0 FOLDER IDS 🚨
-THEME_BACKGROUNDS_FOLDER_ID = "YOUR_NEW_BACKGROUNDS_FOLDER_ID" 
+CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd"
+THEME_BACKGROUNDS_FOLDER_ID = "1mDj_Tcp1iVD45AXvaaiEAkW96RwmeMcz"
 BRANDING_FOLDER_ID = "1Yi8ttLH0hx92VEKQ98CgNHI8jGWh7MpX"
 RAW_UPLOADS_FOLDER_ID = "1OU5MiRFWGWLoU3xxW5-VfVFnzamAmObY"
-FINISHED_FOLDER_ID = "1yZ374vWosaiBwCp3RiWq1IjsVW7sDJAr" 
-CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd" 
+FINISHED_FOLDER_ID = "1yZ374vWosaiBwCp3RiWq1IjsVW7sDJAr"
 
 DRIVE_TOKEN = os.environ.get("DRIVE_TOKEN")
 STUDENT_NAME = os.environ.get("STUDENT_NAME", "Student").strip()
@@ -31,8 +28,8 @@ WEB_APP_URL = os.environ.get("WEB_APP_URL", "").strip()
 
 headers = {"Authorization": f"Bearer {DRIVE_TOKEN}", "Accept": "application/json"}
 
-log(f"🎬 Starting 16:9 Deemcee Video Processor for: {STUDENT_NAME} | Theme: {THEME} | Grade: {GRADE_LEVEL}")
-log(f"📁 Destination Folder ID: {FINISHED_FOLDER_ID}")
+def log(msg):
+    print(msg, flush=True)
 
 # ==========================================
 # 2. GOOGLE DRIVE API HELPERS
@@ -82,7 +79,6 @@ def download_file(file_id, dest_path):
         with open(dest_path, "wb") as f:
             for chunk in res.iter_content(chunk_size=65536):
                 if chunk: f.write(chunk)
-        log(f"✅ Downloaded {dest_path} ({os.path.getsize(dest_path)} bytes)")
         return True
     return False
 
@@ -94,9 +90,9 @@ def download_google_doc_text(file_id):
     return "Please write an encouraging social media caption."
 
 # ==========================================
-# 3. AUTO-DETECT EXACT GREEN SCREEN COLOR
+# 3. AUTO-DETECT GREEN SCREEN COLOR
 # ==========================================
-def auto_detect_greenscreen_color(video_path: str) -> str:
+def auto_detect_greenscreen_color(video_path):
     log("🔍 Analyzing video to auto-detect exact green screen color...")
     try:
         subprocess.run(["ffmpeg", "-y", "-ss", "00:00:00.500", "-i", video_path, "-vframes", "1", "sample_frame.png"], capture_output=True)
@@ -118,12 +114,10 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
     return "0x00B800"
 
 # ==========================================
-# 4. SANITIZE IMAGES (VALID RGB/RGBA PNG)
+# 4. SANITIZE & NORMALIZE
 # ==========================================
 def sanitize_images():
-    has_clean_bg = False
-    has_clean_logo = False
-
+    has_clean_bg, has_clean_logo = False, False
     if os.path.exists("bg.png") and os.path.getsize("bg.png") > 1024:
         log("🧼 Sanitizing Background to 16:9 RGB24...")
         res = subprocess.run(["ffmpeg", "-y", "-i", "bg.png", "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,format=rgb24", "-vframes", "1", "clean_bg.png"], capture_output=True)
@@ -133,20 +127,11 @@ def sanitize_images():
         log("🧼 Sanitizing Deemcee Logo to RGBA PNG...")
         res = subprocess.run(["ffmpeg", "-y", "-i", "logo.png", "-vf", "scale=240:-1,format=rgba", "-vframes", "1", "clean_logo.png"], capture_output=True)
         if res.returncode == 0: has_clean_logo = True
-
     return has_clean_bg, has_clean_logo
 
 def normalize_clip(input_path, output_path, step_name):
     log(f"🎬 Normalizing {step_name} ({input_path})...")
-    cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k", output_path]
-    subprocess.run(cmd, capture_output=True)
-
-def run_ffmpeg_command(cmd, step_name):
-    log(f"🚀 Running {step_name}...")
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        log(f"❌ {step_name} Failed:\n{res.stderr}")
-        raise RuntimeError(f"{step_name} failed")
+    subprocess.run(["ffmpeg", "-y", "-i", input_path, "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k", output_path], capture_output=True)
 
 # ==========================================
 # 5. GEMINI AI EVALUATION
@@ -162,7 +147,7 @@ def evaluate_video(video_path):
     try:
         with open(proxy_path, "rb") as f: video_bytes = f.read()
         video_part = types.Part.from_bytes(data=video_bytes, mime_type='video/mp4')
-    except Exception as e: return {}
+    except Exception: return {}
 
     rubrics = {
         "1": "body action, body posture, speaking clarity",
@@ -209,7 +194,7 @@ Respond strictly in valid JSON format matching:
                 eval_data = json.loads(response.text)
                 log(f"✅ AI Evaluation parsed successfully!")
                 return eval_data
-            except Exception as e:
+            except Exception:
                 time.sleep(20)
     return {}
 
@@ -217,14 +202,9 @@ Respond strictly in valid JSON format matching:
 # 6. MAIN COMPOSITOR PIPELINE
 # ==========================================
 def process_video():
-    # 1. Download Assets
     log("=====================================================")
     log("📥 STEP 1: DOWNLOADING REQUIRED ASSETS")
-    has_raw = download_file(search_drive_file(FILE_NAME, RAW_UPLOADS_FOLDER_ID), "raw_input.mp4")
-    if not has_raw:
-        log("❌ Cannot proceed without raw speech video.")
-        return None
-
+    
     bg_file_id = get_theme_background_file_id(THEME, THEME_BACKGROUNDS_FOLDER_ID)
     has_bg = download_file(bg_file_id, "bg.png") if bg_file_id else False
     if not has_bg:
@@ -236,14 +216,12 @@ def process_video():
     has_intro = download_file(search_drive_file("intro", BRANDING_FOLDER_ID), "intro.mp4")
     has_outro = download_file(search_drive_file("outro", BRANDING_FOLDER_ID), "outro.mp4")
 
-    # 2. Extract Color & Sanitize
     log("=====================================================")
     log("🧹 STEP 2: SANITIZATION & PREP")
     detected_color = auto_detect_greenscreen_color("raw_input.mp4")
     has_clean_bg, has_clean_logo = sanitize_images()
     temp_keyed = "temp_keyed.mp4"
 
-    # 3. Chroma Key & Branding
     log("=====================================================")
     log("🎬 STEP 3: CHROMA KEY & BRANDING")
     if has_clean_bg and has_clean_logo:
@@ -255,9 +233,9 @@ def process_video():
     else:
         cmd1 = ["ffmpeg", "-y", "-i", "raw_input.mp4", "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2", temp_keyed]
     
-    run_ffmpeg_command(cmd1, "Main Speech Render")
+    subprocess.run(cmd1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log("✅ Chroma Key Render Complete.")
 
-    # 4. Intro/Outro Concatenation
     log("=====================================================")
     log("🎞️ STEP 4: CONCATENATING INTRO / OUTRO")
     final_name = f"{STUDENT_NAME}_{THEME}_Final.mp4".replace(" ", "_")
@@ -271,13 +249,11 @@ def process_video():
                 normalize_clip("outro.mp4", "norm_outro.mp4", "Outro Video")
                 f.write("file 'norm_outro.mp4'\n")
 
-        run_ffmpeg_command(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "concat_list.txt", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-b:a", "192k", final_name], "Concatenation")
+        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "concat_list.txt", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-b:a", "192k", final_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         os.rename(temp_keyed, final_name)
+    log("✅ Final Video Stitched.")
 
-    log("✅ Final Video Rendered.")
-
-    # 5. Upload Final
     log("=====================================================")
     log(f"☁️ STEP 5: UPLOADING TO GOOGLE DRIVE FOLDER ID {FINISHED_FOLDER_ID}")
     init_res = requests.post(
@@ -298,7 +274,16 @@ def process_video():
 # 7. EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    eval_data = evaluate_video("raw_input.mp4") if os.path.exists("raw_input.mp4") else evaluate_video("ai_proxy.mp4") # Failsafe
+    log(f"🚀 Starting Deemcee Pipeline for {STUDENT_NAME}...")
+    
+    raw_id = search_drive_file(FILE_NAME, RAW_UPLOADS_FOLDER_ID)
+    has_raw = download_file(raw_id, "raw_input.mp4")
+    
+    if not has_raw:
+        log("❌ Cannot proceed without raw speech video.")
+        sys.exit(1)
+        
+    eval_data = evaluate_video("raw_input.mp4")
     final_video_link = process_video()
         
     if WEB_APP_URL and eval_data and final_video_link:
