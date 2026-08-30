@@ -10,7 +10,9 @@ from google.genai import types
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & SETUP
 # ==========================================
-GEMINI_API_KEY = "AQ.Ab8RN6LH-weAR0-U6mNRjUjsx4TffW2FAcYZySL724PMMMTZ_A"
+# Using the specific newly generated key requested
+GEMINI_API_KEY = "AQ.Ab8RN6I-YsHp6V5SzRaIpRTi6rXo9-M7ISierPKtVyqQr_e_Tg"
+
 CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd"
 THEME_BACKGROUND_ID = "1mDj_Tcp1iVD45AXvaaiEAkW96RwmeMcz"
 EVALUATION_REPORT_FOLDER_ID = "14ekG_VpKIcQjUNiDQaqz7rg-nToPcz9q"
@@ -52,6 +54,7 @@ def download_file(file_id, dest_path):
             for chunk in res.iter_content(chunk_size=65536):
                 if chunk: f.write(chunk)
         return True
+    log(f"⚠️ Failed to download file ID {file_id}: Status {res.status_code}")
     return False
 
 def download_google_doc_text(file_id):
@@ -64,9 +67,8 @@ def download_google_doc_text(file_id):
 
 def upload_evaluation_report(eval_data, folder_id):
     file_name = f"{STUDENT_NAME}_{THEME}_Evaluation.json".replace(" ", "_")
-    log(f"☁️ Uploading raw Evaluation JSON report to Drive...")
+    log("☁️ Uploading raw Evaluation JSON report to Drive...")
     
-    # Save JSON locally first
     with open(file_name, "w") as f:
         json.dump(eval_data, f, indent=2)
 
@@ -88,10 +90,8 @@ def upload_evaluation_report(eval_data, folder_id):
 # ==========================================
 def evaluate_video(video_path):
     log("🧠 Starting Gemini AI Evaluation...")
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    # 3a. Uploading the Video
     try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
         log("☁️ Uploading video to Gemini...")
         video_file = client.files.upload(file=video_path)
         
@@ -106,7 +106,7 @@ def evaluate_video(video_path):
         log(f"❌ File upload error: {e}")
         return {}
 
-    # 3b. Rubric Setup
+    # Rubric Setup
     rubrics = {
         "1": "body action, body posture, speaking clarity",
         "2": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration",
@@ -139,14 +139,13 @@ Respond strictly in valid JSON format matching:
   "socialMediaCaption": "The full social media text."
 }}"""
 
-    # 3c. Failover Setup (Lite first for speed/RPM, then standard Flash as backup)
+    # Failover Setup: User-confirmed models
     models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash"]
     max_retries_per_model = 3
-    retry_delay_seconds = 30 
+    retry_delay_seconds = 20 
 
-    # 3d. Execution Loop
     for model_name in models_to_try:
-        log(f"\n🚀 Switching to Model: {model_name}")
+        log(f"\n🚀 Attempting Model: {model_name}")
         for attempt in range(1, max_retries_per_model + 1):
             try:
                 log(f"🤖 Generation Attempt {attempt}/{max_retries_per_model}...")
@@ -167,12 +166,12 @@ Respond strictly in valid JSON format matching:
             except Exception as e:
                 log(f"⚠️ Attempt {attempt} with {model_name} failed: {str(e)}")
                 if attempt < max_retries_per_model:
-                    log(f"⏳ API busy or timeout. Waiting {retry_delay_seconds} seconds before retrying...")
+                    log(f"⏳ Waiting {retry_delay_seconds}s before retry...")
                     time.sleep(retry_delay_seconds)
                 else:
-                    log(f"❌ Max retries reached for {model_name}. Moving to next fallback if available.")
+                    log(f"❌ Moving to next model fallback...")
 
-    log("🚨 All models and retry attempts completely failed. Returning empty evaluation.")
+    log("🚨 All models failed. Returning empty evaluation.")
     return {}
 
 # ==========================================
@@ -180,7 +179,7 @@ Respond strictly in valid JSON format matching:
 # ==========================================
 def get_green_screen_color(video_path):
     log("🔍 Auto-detecting green screen color...")
-    subprocess.run(["ffmpeg", "-y", "-ss", "00:00:00.500", "-i", video_path, "-vframes", "1", "sample.png"], capture_output=True)
+    subprocess.run(["ffmpeg", "-y", "-ss", "00:00:00.500", "-i", video_path, "-vframes", "1", "sample.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         img = Image.open("sample.png").convert("RGB")
         w, h = img.size
@@ -198,27 +197,47 @@ def get_green_screen_color(video_path):
 def process_and_upload(raw_video):
     download_file(THEME_BACKGROUND_ID, "bg.png")
     
+    has_logo = False
     logo_file_id = search_drive_file("logo", BRANDING_FOLDER_ID)
-    if logo_file_id: download_file(logo_file_id, "logo.png")
+    if logo_file_id and download_file(logo_file_id, "logo.png"):
+        has_logo = True
 
     color = get_green_screen_color(raw_video)
     final_name = f"{STUDENT_NAME}_{THEME}_Final.mp4".replace(" ", "_")
     
-    log("🎬 Running FFmpeg Chroma Key Pipeline...")
-    filter_complex = (
-        "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
-        f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={color}:0.05:0.10,despill=green,format=yuva420p,fps=30[fg];"
-        "[bg][fg]overlay=(W-w)/2:(H-h)[keyed];"
-        "[2:v]scale=240:-1,format=yuva420p[logo];"
-        "[keyed][logo]overlay=main_w-overlay_w-30:30[v_final]"
-    )
+    log(f"🎬 Running FFmpeg Chroma Key Pipeline (Logo enabled: {has_logo})...")
     
-    subprocess.run([
-        "ffmpeg", "-y", "-i", raw_video, "-loop", "1", "-i", "bg.png", "-loop", "1", "-i", "logo.png",
-        "-filter_complex", filter_complex, "-map", "[v_final]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-b:a", "192k",
-        "-shortest", final_name
-    ], capture_output=True)
+    if has_logo:
+        filter_complex = (
+            "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
+            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={color}:0.05:0.10,despill=green,format=yuva420p,fps=30[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)[keyed];"
+            "[2:v]scale=240:-1,format=yuva420p[logo];"
+            "[keyed][logo]overlay=main_w-overlay_w-30:30[v_final]"
+        )
+        cmd = [
+            "ffmpeg", "-y", "-i", raw_video, "-loop", "1", "-i", "bg.png", "-loop", "1", "-i", "logo.png",
+            "-filter_complex", filter_complex, "-map", "[v_final]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-b:a", "192k",
+            "-shortest", final_name
+        ]
+    else:
+        filter_complex = (
+            "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
+            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={color}:0.05:0.10,despill=green,format=yuva420p,fps=30[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)[v_final]"
+        )
+        cmd = [
+            "ffmpeg", "-y", "-i", raw_video, "-loop", "1", "-i", "bg.png",
+            "-filter_complex", filter_complex, "-map", "[v_final]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-b:a", "192k",
+            "-shortest", final_name
+        ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"❌ FFmpeg error:\n{result.stderr}")
+        raise RuntimeError("FFmpeg processing failed.")
     
     log("☁️ Uploading Final Video to Drive...")
     init_res = requests.post(
