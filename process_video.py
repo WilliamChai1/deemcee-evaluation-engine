@@ -42,9 +42,14 @@ def search_drive_file(name, parent_id):
     return files[0]["id"] if files else None
 
 def get_first_image_in_folder(folder_id):
-    query = f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false"
+    # Fixed Drive API query: Must use exact matches for mimeType
+    query = f"'{folder_id}' in parents and (mimeType='image/png' or mimeType='image/jpeg') and trashed=false"
     url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=files(id)"
     res = requests.get(url, headers=headers).json()
+    
+    if "error" in res:
+        log(f"⚠️ Drive API Query Error: {res['error'].get('message')}")
+        
     files = res.get("files", [])
     return files[0]["id"] if files else None
 
