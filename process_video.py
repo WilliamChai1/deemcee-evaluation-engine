@@ -35,6 +35,9 @@ OUTRO_VIDEO = "outro.mp4"
 SAMPLE_FRAME = "sample_frame.png"
 FINAL_OUTPUT = f"{STUDENT_NAME}_{THEME}_Evaluation_Final.mp4"
 
+# Official Deemcee Hashtags Suite
+DEEMCEE_HASHTAGS = "#deemcee #deemceepinesquarekuching #speaklively #confidence #confidencebuilding #publicspeaking #malaysia #childreneducation #childhoodeducation #deemceepinesquare #pinesquare #batukawa #moyan #kuching #stage #shining #selfgrowth #enrichment"
+
 # ==========================================
 # 1. DOWNLOAD ASSETS VIA OFFICIAL DRIVE API
 # ==========================================
@@ -120,6 +123,9 @@ Task: Evaluate student speech video for {STUDENT_NAME} (Grade {GRADE_LEVEL}, The
 Rubric: [{selected_rubric}].
 Scoring: Strictly 1 to 10 for each element with timestamps.
 
+You must generate an encouraging bilingual (English & Chinese) social media caption that strictly includes these exact hashtags:
+"{DEEMCEE_HASHTAGS}"
+
 Respond strictly in valid JSON matching:
 {{
   "studentName": "{STUDENT_NAME}",
@@ -133,7 +139,7 @@ Respond strictly in valid JSON matching:
   "maxScore": 30,
   "advanceRecommendation": "Yes",
   "actionPlan": ["Actionable tip 1", "Actionable tip 2"],
-  "socialMediaCaption": "Encouraging bilingual English & Chinese caption ready for Instagram Reels & Facebook with hashtags #Deemcee #PublicSpeakingForKids"
+  "socialMediaCaption": "Encouraging bilingual English & Chinese caption\\n\\n{DEEMCEE_HASHTAGS}"
 }}"""
 
         gen_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
@@ -274,7 +280,6 @@ def upload_directly_to_google_drive(video_path: str, folder_id: str):
             log(f"🔗 Google Drive Video Link: {web_link}")
             log("=====================================================")
 
-            # Set public view permission
             perm_url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
             requests.post(perm_url, headers={"Authorization": f"Bearer {DRIVE_TOKEN}"}, json={"role": "reader", "type": "anyone"}, timeout=15)
 
