@@ -163,7 +163,7 @@ Respond strictly in valid JSON matching:
                     "grade_level": GRADE_LEVEL,
                     "theme": THEME,
                     "eval_data": eval_data
-                }, timeout=30)
+                }, timeout=30, allow_redirects=True)
                 log(f"📁 Reports filed successfully in Drive: {res.text}")
             except Exception as ex:
                 log(f"Warning calling Webapp for docs: {ex}")
@@ -213,7 +213,7 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
             count = len(green_samples)
             avg_r = int(sum(item[0] for item in green_samples) / count)
             avg_g = int(sum(item for item in green_samples) / count)
-            avg_b = int(sum(item[2] for item in green_samples) / count)
+            avg_b = int(sum(item for item in green_samples) / count)
 
             detected_hex = f"0x{avg_r:02X}{avg_g:02X}{avg_b:02X}"
             log(f"🎯 Auto-Detected Green Screen Color: {detected_hex} (RGB: {avg_r}, {avg_g}, {avg_b})")
@@ -278,9 +278,12 @@ def upload_directly_to_google_drive(video_path: str, folder_id: str):
             perm_url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
             requests.post(perm_url, headers={"Authorization": f"Bearer {DRIVE_TOKEN}"}, json={"role": "reader", "type": "anyone"}, timeout=15)
 
-            # Update Deemcee Status Board with the final video link
+            # Update Deemcee Status Board with final video link
             if WEBAPP_URL:
-                requests.post(WEBAPP_URL, json={"action": "video_completed", "video_url": web_link}, timeout=15)
+                try:
+                    requests.post(WEBAPP_URL, json={"action": "video_completed", "video_url": web_link}, timeout=15, allow_redirects=True)
+                except Exception as ex:
+                    log(f"Warning updating Status Board: {ex}")
 
             return web_link
         else:
