@@ -10,12 +10,11 @@ from google.genai import types
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & SETUP
 # ==========================================
-# Using the specific newly generated key requested
-GEMINI_API_KEY = "AQ.Ab8RN6I-YsHp6V5SzRaIpRTi6rXo9-M7ISierPKtVyqQr_e_Tg"
+# Pulls securely from GitHub Secrets now!
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd"
-THEME_BACKGROUND_ID = "1mDj_Tcp1iVD45AXvaaiEAkW96RwmeMcz"
-EVALUATION_REPORT_FOLDER_ID = "14ekG_VpKIcQjUNiDQaqz7rg-nToPcz9q"
+THEME_BACKGROUNDS_FOLDER_ID = "1mDj_Tcp1iVD45AXvaaiEAkW96RwmeMcz"
 
 # GitHub Actions Payload
 DRIVE_TOKEN = os.environ.get("DRIVE_TOKEN")
@@ -40,10 +39,33 @@ def log(msg):
 # ==========================================
 def search_drive_file(name, parent_id):
     query = f"'{parent_id}' in parents and name contains '{name}' and trashed=false"
-    url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=files(id, name)"
+    url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=files(id, name, mimeType)"
     res = requests.get(url, headers=headers).json()
     files = res.get("files", [])
     return files[0]["id"] if files else None
+
+def get_theme_background_file_id(theme_name, folder_id):
+    file_id = search_drive_file(theme_name, folder_id)
+    if file_id:
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=id,mimeType"
+        meta = requests.get(url, headers=headers).json()
+        if meta.get("mimeType") == "application/vnd.google-apps.folder":
+            sub_file = search_drive_file(".png", file_id) or search_drive_file(".jpg", file_id)
+            if sub_file: return sub_file
+        else:
+            return file_id
+
+    default_id = search_drive_file("default", folder_id)
+    if default_id:
+        url = f"https://www.googleapis.com/drive/v3/files/{default_id}?fields=id,mimeType"
+        meta = requests.get(url, headers=headers).json()
+        if meta.get("mimeType") == "application/vnd.google-apps.folder":
+            sub_file = search_drive_file(".png", default_id) or search_drive_file(".jpg", default_id)
+            if sub_file: return sub_file
+        else:
+            return default_id
+
+    return None
 
 def download_file(file_id, dest_path):
     log(f"⬇️ Downloading media to {dest_path}...")
@@ -64,26 +86,6 @@ def download_google_doc_text(file_id):
     if res.status_code == 200:
         return res.text
     return "Please write an encouraging social media caption."
-
-def upload_evaluation_report(eval_data, folder_id):
-    file_name = f"{STUDENT_NAME}_{THEME}_Evaluation.json".replace(" ", "_")
-    log("☁️ Uploading raw Evaluation JSON report to Drive...")
-    
-    with open(file_name, "w") as f:
-        json.dump(eval_data, f, indent=2)
-
-    init_res = requests.post(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
-        headers={"Authorization": f"Bearer {DRIVE_TOKEN}", "Content-Type": "application/json"},
-        json={"name": file_name, "parents": [folder_id]}
-    )
-    upload_url = init_res.headers["Location"]
-    with open(file_name, "rb") as f:
-        final_res = requests.put(upload_url, data=f.read())
-    
-    file_id = final_res.json().get('id')
-    log(f"✅ Evaluation JSON uploaded with ID: {file_id}")
-    return file_id
 
 # ==========================================
 # 3. GEMINI AI EVALUATION (WITH FAILOVER)
@@ -106,7 +108,6 @@ def evaluate_video(video_path):
         log(f"❌ File upload error: {e}")
         return {}
 
-    # Rubric Setup
     rubrics = {
         "1": "body action, body posture, speaking clarity",
         "2": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration",
@@ -139,7 +140,6 @@ Respond strictly in valid JSON format matching:
   "socialMediaCaption": "The full social media text."
 }}"""
 
-    # Failover Setup: User-confirmed models
     models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash"]
     max_retries_per_model = 3
     retry_delay_seconds = 20 
@@ -195,7 +195,14 @@ def get_green_screen_color(video_path):
     return "0x00B800"
 
 def process_and_upload(raw_video):
-    download_file(THEME_BACKGROUND_ID, "bg.png")
+    bg_file_id = get_theme_background_file_id(THEME, THEME_BACKGROUNDS_FOLDER_ID)
+    has_bg = False
+    if bg_file_id and download_file(bg_file_id, "bg.png"):
+        has_bg = True
+    else:
+        log("⚠️ Theme background not found. Creating fallback 1080p backdrop...")
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=#1A365D:s=1920x1080:d=1", "-vframes", "1", "bg.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        has_bg = True
     
     has_logo = False
     logo_file_id = search_drive_file("logo", BRANDING_FOLDER_ID)
@@ -205,7 +212,7 @@ def process_and_upload(raw_video):
     color = get_green_screen_color(raw_video)
     final_name = f"{STUDENT_NAME}_{THEME}_Final.mp4".replace(" ", "_")
     
-    log(f"🎬 Running FFmpeg Chroma Key Pipeline (Logo enabled: {has_logo})...")
+    log(f"🎬 Running FFmpeg Chroma Key Pipeline (Background: {has_bg}, Logo: {has_logo})...")
     
     if has_logo:
         filter_complex = (
@@ -265,15 +272,11 @@ if __name__ == "__main__":
         
         # 1. Run AI Evaluation
         eval_data = evaluate_video("raw_video.mp4")
-        
-        # 2. Upload Evaluation JSON Report to Drive
-        if eval_data:
-            upload_evaluation_report(eval_data, EVALUATION_REPORT_FOLDER_ID)
             
-        # 3. Render and Upload Video
+        # 2. Render and Upload Video
         final_video_link = process_and_upload("raw_video.mp4")
         
-        # 4. Send Webhook Return
+        # 3. Send Webhook Return to Google Apps Script
         if WEB_APP_URL and eval_data:
             log("📡 Sending completed data back to Apps Script...")
             payload = {
