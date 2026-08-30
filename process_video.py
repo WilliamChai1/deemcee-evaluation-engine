@@ -139,8 +139,8 @@ Respond strictly in valid JSON format matching:
   "socialMediaCaption": "The full social media text."
 }}"""
 
-    # 3c. Failover Setup (Lite first, then standard Flash)
-    models_to_try = ["gemini-1.5-flash-8b", "gemini-1.5-flash"]
+    # 3c. Failover Setup (Lite first for speed/RPM, then standard Flash as backup)
+    models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash"]
     max_retries_per_model = 3
     retry_delay_seconds = 30 
 
