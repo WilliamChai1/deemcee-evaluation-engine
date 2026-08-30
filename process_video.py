@@ -10,10 +10,10 @@ from google.genai import types
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & SETUP
 # ==========================================
-# Hardcoded API Key and File IDs as requested
 GEMINI_API_KEY = "AQ.Ab8RN6LH-weAR0-U6mNRjUjsx4TffW2FAcYZySL724PMMMTZ_A"
 CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd"
 THEME_BACKGROUND_ID = "1mDj_Tcp1iVD45AXvaaiEAkW96RwmeMcz"
+EVALUATION_REPORT_FOLDER_ID = "14ekG_VpKIcQjUNiDQaqz7rg-nToPcz9q"
 
 # GitHub Actions Payload
 DRIVE_TOKEN = os.environ.get("DRIVE_TOKEN")
@@ -62,25 +62,51 @@ def download_google_doc_text(file_id):
         return res.text
     return "Please write an encouraging social media caption."
 
+def upload_evaluation_report(eval_data, folder_id):
+    file_name = f"{STUDENT_NAME}_{THEME}_Evaluation.json".replace(" ", "_")
+    log(f"☁️ Uploading raw Evaluation JSON report to Drive...")
+    
+    # Save JSON locally first
+    with open(file_name, "w") as f:
+        json.dump(eval_data, f, indent=2)
+
+    init_res = requests.post(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+        headers={"Authorization": f"Bearer {DRIVE_TOKEN}", "Content-Type": "application/json"},
+        json={"name": file_name, "parents": [folder_id]}
+    )
+    upload_url = init_res.headers["Location"]
+    with open(file_name, "rb") as f:
+        final_res = requests.put(upload_url, data=f.read())
+    
+    file_id = final_res.json().get('id')
+    log(f"✅ Evaluation JSON uploaded with ID: {file_id}")
+    return file_id
+
 # ==========================================
-# 3. GEMINI AI EVALUATION
+# 3. GEMINI AI EVALUATION (WITH FAILOVER)
 # ==========================================
 def evaluate_video(video_path):
     log("🧠 Starting Gemini AI Evaluation...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    log("☁️ Uploading video to Gemini...")
-    video_file = client.files.upload(file=video_path)
-    
-    while video_file.state.name == "PROCESSING":
-        log("⏳ Waiting for Gemini to process video...")
-        time.sleep(10)
-        video_file = client.files.get(name=video_file.name)
+    # 3a. Uploading the Video
+    try:
+        log("☁️ Uploading video to Gemini...")
+        video_file = client.files.upload(file=video_path)
         
-    if video_file.state.name == "FAILED":
-        raise Exception("Gemini video processing failed.")
+        while video_file.state.name == "PROCESSING":
+            log("⏳ Waiting for Gemini to process video...")
+            time.sleep(10)
+            video_file = client.files.get(name=video_file.name)
+            
+        if video_file.state.name == "FAILED":
+            raise Exception("Gemini video processing failed.")
+    except Exception as e:
+        log(f"❌ File upload error: {e}")
+        return {}
 
-    # Dynamic Rubric based on Grade
+    # 3b. Rubric Setup
     rubrics = {
         "1": "body action, body posture, speaking clarity",
         "2": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration",
@@ -92,8 +118,6 @@ def evaluate_video(video_path):
     
     grade_num = "".join(filter(str.isdigit, GRADE_LEVEL)) or "1"
     current_rubric = rubrics.get(grade_num, rubrics["1"])
-    
-    # Fetch custom caption prompt rules
     caption_instructions = download_google_doc_text(CAPTION_PROMPT_ID)
 
     prompt = f"""Role: Expert public speaking evaluator for the Deemcee programme.
@@ -115,24 +139,41 @@ Respond strictly in valid JSON format matching:
   "socialMediaCaption": "The full social media text."
 }}"""
 
-    log("🤖 Generating AI Evaluation...")
-    response = client.models.generate_content(
-        model='gemini-1.5-pro',
-        contents=[video_file, "Watch this video and evaluate the student's performance."],
-        config=types.GenerateContentConfig(
-            system_instruction=prompt,
-            response_mime_type="application/json",
-            temperature=0.2
-        )
-    )
-    
-    try:
-        evaluation_data = json.loads(response.text)
-        log("✅ AI Evaluation parsed successfully.")
-        return evaluation_data
-    except json.JSONDecodeError:
-        log("❌ Failed to parse JSON from Gemini.")
-        return {}
+    # 3c. Failover Setup (Lite first, then standard Flash)
+    models_to_try = ["gemini-1.5-flash-8b", "gemini-1.5-flash"]
+    max_retries_per_model = 3
+    retry_delay_seconds = 30 
+
+    # 3d. Execution Loop
+    for model_name in models_to_try:
+        log(f"\n🚀 Switching to Model: {model_name}")
+        for attempt in range(1, max_retries_per_model + 1):
+            try:
+                log(f"🤖 Generation Attempt {attempt}/{max_retries_per_model}...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[video_file, "Watch this video and evaluate the student's performance."],
+                    config=types.GenerateContentConfig(
+                        system_instruction=prompt,
+                        response_mime_type="application/json",
+                        temperature=0.2
+                    )
+                )
+                
+                evaluation_data = json.loads(response.text)
+                log(f"✅ AI Evaluation parsed successfully with {model_name}!")
+                return evaluation_data
+                
+            except Exception as e:
+                log(f"⚠️ Attempt {attempt} with {model_name} failed: {str(e)}")
+                if attempt < max_retries_per_model:
+                    log(f"⏳ API busy or timeout. Waiting {retry_delay_seconds} seconds before retrying...")
+                    time.sleep(retry_delay_seconds)
+                else:
+                    log(f"❌ Max retries reached for {model_name}. Moving to next fallback if available.")
+
+    log("🚨 All models and retry attempts completely failed. Returning empty evaluation.")
+    return {}
 
 # ==========================================
 # 4. FFMPEG VIDEO PROCESSING
@@ -155,7 +196,6 @@ def get_green_screen_color(video_path):
     return "0x00B800"
 
 def process_and_upload(raw_video):
-    # Setup Background & Logo
     download_file(THEME_BACKGROUND_ID, "bg.png")
     
     logo_file_id = search_drive_file("logo", BRANDING_FOLDER_ID)
@@ -207,10 +247,14 @@ if __name__ == "__main__":
         # 1. Run AI Evaluation
         eval_data = evaluate_video("raw_video.mp4")
         
-        # 2. Render and Upload Video
+        # 2. Upload Evaluation JSON Report to Drive
+        if eval_data:
+            upload_evaluation_report(eval_data, EVALUATION_REPORT_FOLDER_ID)
+            
+        # 3. Render and Upload Video
         final_video_link = process_and_upload("raw_video.mp4")
         
-        # 3. Send data back to Google Apps Script
+        # 4. Send Webhook Return
         if WEB_APP_URL and eval_data:
             log("📡 Sending completed data back to Apps Script...")
             payload = {
