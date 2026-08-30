@@ -1,0 +1,37 @@
+name: Deemcee Video Processor
+
+on:
+  repository_dispatch:
+    types: [process_video]
+  workflow_dispatch:
+
+jobs:
+  build-and-evaluate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Dependencies
+        run: pip install requests pillow google-genai
+
+      - name: Run AI & Video Processor
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          STATUS_SHEET_ID: ${{ secrets.STATUS_SHEET_ID }}
+          STUDENT_NAME: ${{ github.event.client_payload.student_name }}
+          GRADE_LEVEL: ${{ github.event.client_payload.grade_level }}
+          THEME: ${{ github.event.client_payload.theme }}
+          FILE_NAME: ${{ github.event.client_payload.file_name }}
+          DRIVE_TOKEN: ${{ github.event.client_payload.drive_token }}
+        run: python process_video.py
