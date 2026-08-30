@@ -4,18 +4,17 @@ import requests
 import json
 import time
 from PIL import Image
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & SETUP
 # ==========================================
-# Safely pulls your AQ. key from GitHub Secrets
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd"
 THEME_BACKGROUNDS_FOLDER_ID = "1mDj_Tcp1iVD45AXvaaiEAkW96RwmeMcz"
 
-# GitHub Actions Payload
 DRIVE_TOKEN = os.environ.get("DRIVE_TOKEN")
 STUDENT_NAME = os.environ.get("STUDENT_NAME", "Student").strip()
 GRADE_LEVEL = os.environ.get("GRADE_LEVEL", "Grade 1").strip()
@@ -23,7 +22,6 @@ THEME = os.environ.get("THEME", "default").lower().strip()
 FILE_NAME = os.environ.get("FILE_NAME", "").strip()
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "").strip()
 
-# Deemcee Folder IDs
 RAW_UPLOADS_FOLDER_ID = "1OU5MiRFWGWLoU3xxW5-VfVFnzamAmObY"
 FINISHED_VIDEOS_FOLDER_ID = "1KjjL1O4LzSno5uELcgVQRQ_Otj4tW-io"
 BRANDING_FOLDER_ID = "1U94j4vyMRnNgCes5Wuo4T0PhdkdW5iI4"
@@ -44,7 +42,6 @@ def search_drive_file(name, parent_id):
     return files[0]["id"] if files else None
 
 def get_first_image_in_folder(folder_id):
-    """Finds ANY image file inside a specific folder, regardless of name."""
     query = f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false"
     url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=files(id)"
     res = requests.get(url, headers=headers).json()
@@ -52,7 +49,6 @@ def get_first_image_in_folder(folder_id):
     return files[0]["id"] if files else None
 
 def get_theme_background_file_id(theme_name, folder_id):
-    # 1. Search for Theme Folder
     folder_id_match = search_drive_file(theme_name, folder_id)
     if folder_id_match:
         url = f"https://www.googleapis.com/drive/v3/files/{folder_id_match}?fields=id,mimeType"
@@ -63,7 +59,6 @@ def get_theme_background_file_id(theme_name, folder_id):
         else:
             return folder_id_match
 
-    # 2. Fallback to Default Folder
     default_id = search_drive_file("default", folder_id)
     if default_id:
         url = f"https://www.googleapis.com/drive/v3/files/{default_id}?fields=id,mimeType"
@@ -73,7 +68,6 @@ def get_theme_background_file_id(theme_name, folder_id):
             if img_id: return img_id
         else:
             return default_id
-
     return None
 
 def download_file(file_id, dest_path):
@@ -89,7 +83,6 @@ def download_file(file_id, dest_path):
     return False
 
 def download_google_doc_text(file_id):
-    log(f"⬇️ Exporting text from Google Doc ID: {file_id}...")
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export?mimeType=text/plain"
     res = requests.get(url, headers=headers)
     if res.status_code == 200:
@@ -97,25 +90,29 @@ def download_google_doc_text(file_id):
     return "Please write an encouraging social media caption."
 
 # ==========================================
-# 3. GEMINI AI EVALUATION (LEGACY SDK)
+# 3. GEMINI AI EVALUATION (THE PROXY BYPASS)
 # ==========================================
 def evaluate_video(video_path):
     log("🧠 Starting Gemini AI Evaluation...")
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    proxy_path = "ai_proxy.mp4"
+    log("🗜️ Compressing proxy video to bypass Google File API limits...")
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path, "-t", "180",
+        "-vf", "scale=640:-2", "-vcodec", "libx264", "-crf", "32", 
+        "-preset", "ultrafast", "-acodec", "aac", "-b:a", "48k", 
+        proxy_path
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     try:
-        log("☁️ Uploading video to Gemini...")
-        video_file = genai.upload_file(path=video_path)
-        
-        while video_file.state.name == "PROCESSING":
-            log("⏳ Waiting for Gemini to process video...")
-            time.sleep(10)
-            video_file = genai.get_file(video_file.name)
-            
-        if video_file.state.name == "FAILED":
-            raise Exception("Gemini video processing failed.")
+        with open(proxy_path, "rb") as f:
+            video_bytes = f.read()
+        log(f"📦 Proxy video ready: {len(video_bytes) / (1024*1024):.2f} MB")
+        video_part = types.Part.from_bytes(data=video_bytes, mime_type='video/mp4')
     except Exception as e:
-        log(f"❌ File upload error: {e}")
+        log(f"❌ Failed to process proxy video: {e}")
         return {}
 
     rubrics = {
@@ -159,13 +156,11 @@ Respond strictly in valid JSON format matching:
         for attempt in range(1, max_retries_per_model + 1):
             try:
                 log(f"🤖 Generation Attempt {attempt}/{max_retries_per_model}...")
-                model = genai.GenerativeModel(
-                    model_name=model_name,
-                    system_instruction=prompt
-                )
-                response = model.generate_content(
-                    [video_file, "Watch this video and evaluate the student's performance."],
-                    generation_config=genai.types.GenerationConfig(
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[video_part, "Watch this video and evaluate the student's performance."],
+                    config=types.GenerateContentConfig(
+                        system_instruction=prompt,
                         response_mime_type="application/json",
                         temperature=0.2
                     )
@@ -282,7 +277,7 @@ if __name__ == "__main__":
     raw_id = search_drive_file(FILE_NAME, RAW_UPLOADS_FOLDER_ID)
     if raw_id and download_file(raw_id, "raw_video.mp4"):
         
-        # 1. Run AI Evaluation
+        # 1. Run AI Evaluation via Proxy Bypass
         eval_data = evaluate_video("raw_video.mp4")
             
         # 2. Render and Upload Video
