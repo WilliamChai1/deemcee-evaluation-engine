@@ -10,18 +10,23 @@ from google.genai import types
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & SETUP
 # ==========================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Hardcoded API Key and File IDs as requested
+GEMINI_API_KEY = "AQ.Ab8RN6LH-weAR0-U6mNRjUjsx4TffW2FAcYZySL724PMMMTZ_A"
+CAPTION_PROMPT_ID = "1p_aA4Ga3MScrd_M8rIlfcPcPgSPmjuUd"
+THEME_BACKGROUND_ID = "1mDj_Tcp1iVD45AXvaaiEAkW96RwmeMcz"
+
+# GitHub Actions Payload
 DRIVE_TOKEN = os.environ.get("DRIVE_TOKEN")
 STUDENT_NAME = os.environ.get("STUDENT_NAME", "Student").strip()
 GRADE_LEVEL = os.environ.get("GRADE_LEVEL", "Grade 1").strip()
-THEME = os.environ.get("THEME", "pilot").lower().strip()
+THEME = os.environ.get("THEME", "default").lower().strip()
 FILE_NAME = os.environ.get("FILE_NAME", "").strip()
+WEB_APP_URL = os.environ.get("WEB_APP_URL", "").strip()
 
 # Deemcee Folder IDs
 RAW_UPLOADS_FOLDER_ID = "1OU5MiRFWGWLoU3xxW5-VfVFnzamAmObY"
 FINISHED_VIDEOS_FOLDER_ID = "1KjjL1O4LzSno5uELcgVQRQ_Otj4tW-io"
 BRANDING_FOLDER_ID = "1U94j4vyMRnNgCes5Wuo4T0PhdkdW5iI4"
-THEME_BACKGROUNDS_FOLDER_ID = "1KU3Qa9T0gdc3Z_bH6i3HRfSCyAD1KNqk"
 
 headers = {"Authorization": f"Bearer {DRIVE_TOKEN}", "Accept": "application/json"}
 
@@ -39,13 +44,23 @@ def search_drive_file(name, parent_id):
     return files[0]["id"] if files else None
 
 def download_file(file_id, dest_path):
-    log(f"⬇️ Downloading to {dest_path}...")
+    log(f"⬇️ Downloading media to {dest_path}...")
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
     res = requests.get(url, headers=headers, stream=True)
-    with open(dest_path, "wb") as f:
-        for chunk in res.iter_content(chunk_size=65536):
-            if chunk: f.write(chunk)
-    return os.path.exists(dest_path)
+    if res.status_code == 200:
+        with open(dest_path, "wb") as f:
+            for chunk in res.iter_content(chunk_size=65536):
+                if chunk: f.write(chunk)
+        return True
+    return False
+
+def download_google_doc_text(file_id):
+    log(f"⬇️ Exporting text from Google Doc ID: {file_id}...")
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export?mimeType=text/plain"
+    res = requests.get(url, headers=headers)
+    if res.status_code == 200:
+        return res.text
+    return "Please write an encouraging social media caption."
 
 # ==========================================
 # 3. GEMINI AI EVALUATION
@@ -54,11 +69,9 @@ def evaluate_video(video_path):
     log("🧠 Starting Gemini AI Evaluation...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # Upload to Gemini
     log("☁️ Uploading video to Gemini...")
     video_file = client.files.upload(file=video_path)
     
-    # Wait for processing
     while video_file.state.name == "PROCESSING":
         log("⏳ Waiting for Gemini to process video...")
         time.sleep(10)
@@ -79,21 +92,21 @@ def evaluate_video(video_path):
     
     grade_num = "".join(filter(str.isdigit, GRADE_LEVEL)) or "1"
     current_rubric = rubrics.get(grade_num, rubrics["1"])
+    
+    # Fetch custom caption prompt rules
+    caption_instructions = download_google_doc_text(CAPTION_PROMPT_ID)
 
     prompt = f"""Role: Expert public speaking evaluator for the Deemcee programme.
 Task: Evaluate student speech video for {STUDENT_NAME} ({GRADE_LEVEL}, Theme: "{THEME}").
 Rubric: [{current_rubric}].
 Scoring: Strictly 1 to 10 for each element with timestamps.
 
-Additionally, write a highly engaging social media caption that AEMs (Acknowledges, Encourages, Motivates) the student. 
-Rules:
-1. Opening: Start exactly with "🌟{GRADE_LEVEL} Video Assignment 🌟 - I am a {THEME} [add 2 relevant emojis]".
-2. The AEM Body: Write a full 3-4 sentence paragraph highlighting their top scoring rubric elements. You MUST explicitly state *why* they did well based on the video.
-3. Closing: End exactly with "Keep shining, {STUDENT_NAME}! We believe every child can grow with confidence and creativity. 🎊🎉"
+Social Media Instructions:
+{caption_instructions}
 
 Respond strictly in valid JSON format matching:
 {{
-  "encouragingSummary": "Summary",
+  "encouragingSummary": "Summary text",
   "elements": [ {{ "elementName": "Body Action", "score": 7, "feedback": "Feedback @ 0:15" }} ],
   "totalScore": 21,
   "maxScore": 30,
@@ -113,10 +126,13 @@ Respond strictly in valid JSON format matching:
         )
     )
     
-    # Save the raw JSON data for the Report Builder later
-    with open("ai_evaluation.json", "w") as f:
-        f.write(response.text)
-    log("✅ AI Evaluation Saved.")
+    try:
+        evaluation_data = json.loads(response.text)
+        log("✅ AI Evaluation parsed successfully.")
+        return evaluation_data
+    except json.JSONDecodeError:
+        log("❌ Failed to parse JSON from Gemini.")
+        return {}
 
 # ==========================================
 # 4. FFMPEG VIDEO PROCESSING
@@ -127,7 +143,6 @@ def get_green_screen_color(video_path):
     try:
         img = Image.open("sample.png").convert("RGB")
         w, h = img.size
-        # Sample corners
         samples = [img.getpixel((int(w*0.05), int(h*0.05))), img.getpixel((int(w*0.95), int(h*0.05)))]
         green_samples = [s for s in samples if s[1] > s[0] and s[1] > s[2]]
         if green_samples:
@@ -141,11 +156,9 @@ def get_green_screen_color(video_path):
 
 def process_and_upload(raw_video):
     # Setup Background & Logo
-    bg_folder_id = search_drive_file(THEME, THEME_BACKGROUNDS_FOLDER_ID) or search_drive_file("default", THEME_BACKGROUNDS_FOLDER_ID)
-    bg_file_id = search_drive_file(".png", bg_folder_id) if bg_folder_id else None
-    logo_file_id = search_drive_file("logo", BRANDING_FOLDER_ID)
+    download_file(THEME_BACKGROUND_ID, "bg.png")
     
-    if bg_file_id: download_file(bg_file_id, "bg.png")
+    logo_file_id = search_drive_file("logo", BRANDING_FOLDER_ID)
     if logo_file_id: download_file(logo_file_id, "logo.png")
 
     color = get_green_screen_color(raw_video)
@@ -177,16 +190,42 @@ def process_and_upload(raw_video):
     with open(final_name, "rb") as f:
         final_res = requests.put(upload_url, data=f.read())
     
-    log(f"🎉 SUCCESS! Final video uploaded with ID: {final_res.json().get('id')}")
+    file_id = final_res.json().get('id')
+    video_link = f"https://drive.google.com/file/d/{file_id}/view"
+    log(f"🎉 SUCCESS! Final video uploaded with ID: {file_id}")
+    return video_link
 
 # ==========================================
-# 5. EXECUTION PIPELINE
+# 5. EXECUTION & WEBHOOK BOOMERANG
 # ==========================================
 if __name__ == "__main__":
     log(f"🚀 Starting Deemcee Pipeline for {STUDENT_NAME}...")
+    
     raw_id = search_drive_file(FILE_NAME, RAW_UPLOADS_FOLDER_ID)
     if raw_id and download_file(raw_id, "raw_video.mp4"):
-        evaluate_video("raw_video.mp4")
-        process_and_upload("raw_video.mp4")
+        
+        # 1. Run AI Evaluation
+        eval_data = evaluate_video("raw_video.mp4")
+        
+        # 2. Render and Upload Video
+        final_video_link = process_and_upload("raw_video.mp4")
+        
+        # 3. Send data back to Google Apps Script
+        if WEB_APP_URL and eval_data:
+            log("📡 Sending completed data back to Apps Script...")
+            payload = {
+                "action": "evaluationComplete",
+                "studentName": STUDENT_NAME,
+                "studentGrade": GRADE_LEVEL,
+                "speechTheme": THEME,
+                "fileName": FILE_NAME,
+                "videoLink": final_video_link,
+                "evaluation": eval_data
+            }
+            res = requests.post(WEB_APP_URL, json=payload)
+            log(f"✅ Webhook return status: {res.status_code}")
+        else:
+            log("⚠️ Web App URL missing or Evaluation failed. Skipping return webhook.")
+            
     else:
         log("❌ Failed to find or download the raw video.")
