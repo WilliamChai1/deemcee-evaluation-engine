@@ -154,7 +154,7 @@ Respond strictly in valid JSON matching:
         eval_data = json.loads(eval_json_text)
         log("✅ Gemini Evaluation & Caption complete!")
 
-        # Send evaluation and caption back to Apps Script to generate the Google Docs in their folders
+        # Send evaluation and caption back to Apps Script to generate Google Docs in Drive
         if WEBAPP_URL:
             try:
                 res = requests.post(WEBAPP_URL, json={
