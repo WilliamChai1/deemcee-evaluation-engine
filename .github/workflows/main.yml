@@ -3,37 +3,39 @@ name: Deemcee Video Processor
 on:
   repository_dispatch:
     types: [process_video]
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-and-post:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Install System Dependencies (FFmpeg)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Install Python Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install google-genai requests pillow
+      - name: Install Dependencies
+        run: pip install requests pillow
 
-      - name: Run AI & Video Processor
+      - name: Run Video Processor
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
           STUDENT_NAME: ${{ github.event.client_payload.student_name }}
-          GRADE_LEVEL: ${{ github.event.client_payload.grade_level }}
           THEME: ${{ github.event.client_payload.theme }}
-          FILE_NAME: ${{ github.event.client_payload.file_name }}
+          GRADE_LEVEL: ${{ github.event.client_payload.grade_level }}
+          RAW_VIDEO_ID: ${{ github.event.client_payload.raw_video_id }}
+          BG_FILE_ID: ${{ github.event.client_payload.bg_file_id }}
+          LOGO_FILE_ID: ${{ github.event.client_payload.logo_file_id }}
+          INTRO_FILE_ID: ${{ github.event.client_payload.intro_file_id }}
+          OUTRO_FILE_ID: ${{ github.event.client_payload.outro_file_id }}
+          FINISHED_FOLDER_ID: ${{ github.event.client_payload.finished_folder_id }}
           DRIVE_TOKEN: ${{ github.event.client_payload.drive_token }}
-          WEB_APP_URL: ${{ github.event.client_payload.web_app_url }}
         run: python process_video.py
