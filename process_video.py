@@ -23,8 +23,8 @@ FILE_NAME = os.environ.get("FILE_NAME", "").strip()
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "").strip()
 
 RAW_UPLOADS_FOLDER_ID = "1OU5MiRFWGWLoU3xxW5-VfVFnzamAmObY"
-FINISHED_VIDEOS_FOLDER_ID = "1KjjL1O4LzSno5uELcgVQRQ_Otj4tW-io"
-BRANDING_FOLDER_ID = "1U94j4vyMRnNgCes5Wuo4T0PhdkdW5iI4"
+FINISHED_VIDEOS_FOLDER_ID = "1yZ374vWosaiBwCp3RiWq1IjsVW7sDJAr"
+BRANDING_FOLDER_ID = "1Yi8ttLH0hx92VEKQ98CgNHI8jGWh7MpX"
 
 headers = {"Authorization": f"Bearer {DRIVE_TOKEN}", "Accept": "application/json"}
 
