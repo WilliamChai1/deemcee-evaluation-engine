@@ -197,6 +197,7 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
         img = Image.open(SAMPLE_FRAME).convert("RGB")
         w, h = img.size
 
+        # Sample across multiple points (corners, top, upper thirds, sides)
         sample_points = [
             (int(w * 0.05), int(h * 0.05)),
             (int(w * 0.95), int(h * 0.05)),
@@ -207,11 +208,14 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
             (int(w * 0.95), int(h * 0.20)),
             (int(w * 0.05), int(h * 0.35)),
             (int(w * 0.95), int(h * 0.35)),
+            (int(w * 0.05), int(h * 0.50)),
+            (int(w * 0.95), int(h * 0.50)),
         ]
 
         green_samples = []
         for x, y in sample_points:
             r, g, b = img.getpixel((x, y))
+            # Green channel must dominate
             if g > r and g > b:
                 green_samples.append((r, g, b))
 
@@ -280,6 +284,7 @@ def upload_directly_to_google_drive(video_path: str, folder_id: str):
             log(f"🔗 Google Drive Video Link: {web_link}")
             log("=====================================================")
 
+            # Set public view permission
             perm_url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
             requests.post(perm_url, headers={"Authorization": f"Bearer {DRIVE_TOKEN}"}, json={"role": "reader", "type": "anyone"}, timeout=15)
 
@@ -381,7 +386,7 @@ def normalize_clip(input_path, output_path, step_name):
     run_ffmpeg_command(cmd, step_name)
 
 # ==========================================
-# 7. MAIN VIDEO COMPOSITOR
+# 7. MAIN VIDEO COMPOSITOR (YUV CHROMAKEY SHADOW TOLERANT)
 # ==========================================
 def process_video():
     has_raw = download_drive_file(RAW_VIDEO_ID, RAW_VIDEO)
@@ -403,12 +408,12 @@ def process_video():
     has_bg, has_logo = sanitize_images()
     temp_keyed = "temp_keyed.mp4"
 
-    # Step 3: Chroma Key + 16:9 Theme Background + Top-Right Logo
-    log("🎬 Step 3: Processing Chroma Key & Branding...")
+    # Step 3: YUV Chroma Key (Removes shadows/uneven light at ceiling) + Branding
+    log("🎬 Step 3: Processing YUV Chroma Key & Branding...")
     if has_bg and has_logo:
         filter_complex = (
             "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
-            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,colorkey={detected_color}:0.30:0.03,despill=green,format=yuva420p,fps=30[fg];"
+            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={detected_color}:0.16:0.04,despill=green,format=yuva420p,fps=30[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)[keyed];"
             "[2:v]scale=240:-1,format=yuva420p[logo];"
             "[keyed][logo]overlay=main_w-overlay_w-30:30[v_final]"
@@ -434,7 +439,7 @@ def process_video():
     elif has_bg:
         filter_complex = (
             "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
-            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,colorkey={detected_color}:0.30:0.03,despill=green,format=yuva420p,fps=30[fg];"
+            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={detected_color}:0.16:0.04,despill=green,format=yuva420p,fps=30[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)[v_final]"
         )
         cmd1 = [
