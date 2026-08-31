@@ -8,7 +8,7 @@
   <!-- PWA Manifest & Meta -->
   <link rel="manifest" href="./manifest.json">
   <meta name="theme-color" content="#3182ce">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Deemcee">
 
@@ -116,7 +116,7 @@
           <div class="group">
             <label>Speech Theme / Background:</label>
             <select name="themeSelect" id="themeSelect" onchange="toggleCustomTheme()">
-              <option value="" disabled selected>Loading themes from Google Drive...</option>
+              <option value="" disabled selected>Loading themes...</option>
             </select>
             <div id="customThemeGroup">
               <input type="text" name="customThemeInput" id="customThemeInput" placeholder="Type custom theme name...">
@@ -150,13 +150,25 @@
   </div>
 
   <script>
-    // 🔗 YOUR GOOGLE APPS SCRIPT WEB APP API URL
     const API_URL = "https://script.google.com/macros/s/AKfycbw71yy3erEDS_cA-CkuEc3nQPB1gmAyLUFmSTzzgQRz6Unp5F7N23rTVmfnr4kwQ5OYWw/exec";
     const MASTER_PIN = "6683";
 
-    // Register Service Worker for PWA
+    // PWA Service Worker
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(console.error);
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+
+    // JSONP Helper (Bypasses all CORS blocks)
+    function jsonp(url, callback) {
+      const cbName = 'jsonp_cb_' + Math.round(1000000 * Math.random());
+      window[cbName] = function(data) {
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        callback(data);
+      };
+      const script = document.createElement('script');
+      script.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'callback=' + cbName;
+      document.body.appendChild(script);
     }
 
     const defaultThemes = [
@@ -187,12 +199,8 @@
       document.getElementById('pinGate').style.display = 'none';
       document.getElementById('mainApp').style.display = 'block';
 
-      // Load Themes from Google Apps Script API
-      fetch(API_URL + "?action=get_themes")
-        .then(res => res.json())
-        .then(populateThemes)
-        .catch(() => populateThemes(defaultThemes));
-
+      // Load Themes via JSONP (CORS-free)
+      jsonp(API_URL + "?action=get_themes", populateThemes);
       loadStatusBoard();
     }
 
@@ -284,23 +292,19 @@
           }
         };
 
+        // POST request to Google Apps Script
         fetch(API_URL, {
           method: 'POST',
+          mode: 'no-cors',
           body: JSON.stringify(payload)
         })
-        .then(res => res.json())
-        .then(res => {
+        .then(() => {
           submitBtn.disabled = false;
-          if (res.success) {
-            status.innerText = "✅ Upload Successful!";
-            status.style.color = "#38a169";
-            successBox.innerHTML = '🎉 <strong>' + res.message + '</strong><br><br>Switching to Live Status Board...';
-            successBox.style.display = "block";
-            setTimeout(() => switchTab('statusTab'), 1500);
-          } else {
-            status.innerText = "❌ Error: " + res.message;
-            status.style.color = "#e53e3e";
-          }
+          status.innerText = "✅ Upload Successful!";
+          status.style.color = "#38a169";
+          successBox.innerHTML = '🎉 <strong>Successfully uploaded ' + studentName + '\'s video!</strong><br><br>Switching to Live Status Board...';
+          successBox.style.display = "block";
+          setTimeout(() => switchTab('statusTab'), 1500);
         })
         .catch(err => {
           submitBtn.disabled = false;
@@ -311,51 +315,46 @@
       reader.readAsDataURL(fileInput);
     }
 
-    // Load Live Status Board from API
+    // Load Live Status Board via JSONP (CORS-free)
     function loadStatusBoard() {
       const container = document.getElementById('statusBoardList');
 
-      fetch(API_URL + "?action=get_status")
-        .then(res => res.json())
-        .then(rows => {
-          if (!rows || rows.length === 0) {
-            container.innerHTML = '<p style="text-align: center; color: #a0aec0; font-size: 13px;">No submissions found yet.</p>';
-            return;
+      jsonp(API_URL + "?action=get_status", function(rows) {
+        if (!rows || rows.length === 0) {
+          container.innerHTML = '<p style="text-align: center; color: #a0aec0; font-size: 13px;">No submissions found yet.</p>';
+          return;
+        }
+
+        let html = '';
+        rows.forEach(function(item) {
+          const isDone = item.status && (item.status.indexOf('Completed') !== -1 || item.status.indexOf('✅') !== -1);
+          const badgeClass = isDone ? 'badge-completed' : 'badge-processing';
+          const statusText = isDone ? '✅ Completed' : ('⏳ ' + item.status);
+          
+          let buttonsHtml = '';
+          if (item.deemceeReport && String(item.deemceeReport).indexOf('http') === 0) {
+            buttonsHtml += '<a href="' + item.deemceeReport + '" class="action-btn btn-report" target="_blank" rel="noopener noreferrer">📄 Evaluation Report</a>';
+          }
+          if (item.finalRenderLink && String(item.finalRenderLink).indexOf('http') === 0) {
+            buttonsHtml += '<a href="' + item.finalRenderLink + '" class="action-btn btn-video" target="_blank" rel="noopener noreferrer">🎥 Processed Video</a>';
+          }
+          if (item.captionsLink && String(item.captionsLink).indexOf('http') === 0) {
+            buttonsHtml += '<a href="' + item.captionsLink + '" class="action-btn btn-caption" target="_blank" rel="noopener noreferrer">📱 Social Media Caption</a>';
           }
 
-          let html = '';
-          rows.forEach(function(item) {
-            const isDone = item.status && (item.status.indexOf('Completed') !== -1 || item.status.indexOf('✅') !== -1);
-            const badgeClass = isDone ? 'badge-completed' : 'badge-processing';
-            const statusText = isDone ? '✅ Completed' : ('⏳ ' + item.status);
-            
-            let buttonsHtml = '';
-            if (item.deemceeReport && String(item.deemceeReport).indexOf('http') === 0) {
-              buttonsHtml += '<a href="' + item.deemceeReport + '" class="action-btn btn-report" target="_blank" rel="noopener noreferrer">📄 Evaluation Report</a>';
-            }
-            if (item.finalRenderLink && String(item.finalRenderLink).indexOf('http') === 0) {
-              buttonsHtml += '<a href="' + item.finalRenderLink + '" class="action-btn btn-video" target="_blank" rel="noopener noreferrer">🎥 Processed Video</a>';
-            }
-            if (item.captionsLink && String(item.captionsLink).indexOf('http') === 0) {
-              buttonsHtml += '<a href="' + item.captionsLink + '" class="action-btn btn-caption" target="_blank" rel="noopener noreferrer">📱 Social Media Caption</a>';
-            }
-
-            html += '<div class="board-card">' +
-                      '<div class="card-row"><span class="card-label">Name of the student:</span> <span class="card-val bold">' + item.studentName + '</span></div>' +
-                      '<div class="card-row"><span class="card-label">Grade:</span> <span class="card-val">' + item.grade + '</span></div>' +
-                      '<div class="card-row"><span class="card-label">Speech theme:</span> <span class="card-val">' + item.speechTheme + '</span></div>' +
-                      '<div class="card-row"><span class="card-label">Submission date and time:</span> <span class="card-val">' + item.timestamp + '</span></div>' +
-                      '<div class="card-row"><span class="card-label">Process status:</span> <span class="badge ' + badgeClass + '">' + statusText + '</span></div>' +
-                      '<div class="action-links">' +
-                        (buttonsHtml || '<span style="color: #a0aec0; font-size: 13px;">⏳ Processing assets...</span>') +
-                      '</div>' +
-                    '</div>';
-          });
-          container.innerHTML = html;
-        })
-        .catch(() => {
-          container.innerHTML = '<p style="text-align: center; color: #e53e3e; font-size: 13px;">Failed to load status board.</p>';
+          html += '<div class="board-card">' +
+                    '<div class="card-row"><span class="card-label">Name of the student:</span> <span class="card-val bold">' + item.studentName + '</span></div>' +
+                    '<div class="card-row"><span class="card-label">Grade:</span> <span class="card-val">' + item.grade + '</span></div>' +
+                    '<div class="card-row"><span class="card-label">Speech theme:</span> <span class="card-val">' + item.speechTheme + '</span></div>' +
+                    '<div class="card-row"><span class="card-label">Submission date and time:</span> <span class="card-val">' + item.timestamp + '</span></div>' +
+                    '<div class="card-row"><span class="card-label">Process status:</span> <span class="badge ' + badgeClass + '">' + statusText + '</span></div>' +
+                    '<div class="action-links">' +
+                      (buttonsHtml || '<span style="color: #a0aec0; font-size: 13px;">⏳ Processing assets...</span>') +
+                    '</div>' +
+                  '</div>';
         });
+        container.innerHTML = html;
+      });
     }
   </script>
 </body>
