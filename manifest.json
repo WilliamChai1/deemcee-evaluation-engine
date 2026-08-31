@@ -1,9 +1,0 @@
-{
-  "name": "Deemcee Evaluator & Video Producer",
-  "short_name": "Deemcee",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#f7fafc",
-  "theme_color": "#3182ce",
-  "description": "Deemcee Speech Evaluation & 16:9 Video Suite"
-}
