@@ -35,7 +35,6 @@ OUTRO_VIDEO = "outro.mp4"
 SAMPLE_FRAME = "sample_frame.png"
 FINAL_OUTPUT = f"{STUDENT_NAME}_{THEME}_Evaluation_Final.mp4"
 
-# Official Deemcee Hashtags Suite
 DEEMCEE_HASHTAGS = "#deemcee #deemceepinesquarekuching #speaklively #confidence #confidencebuilding #publicspeaking #malaysia #childreneducation #childhoodeducation #deemceepinesquare #pinesquare #batukawa #moyan #kuching #stage #shining #selfgrowth #enrichment"
 
 # ==========================================
@@ -66,8 +65,165 @@ def download_drive_file(file_id: str, dest_path: str):
         return False
 
 # ==========================================
-# 2. GEMINI SPEECH EVALUATION & SOCIAL CAPTION
+# 2. OFFICIAL DEEMCEE 1-3 POINT EVALUATION ENGINE
 # ==========================================
+MASTER_CRITERIA = {
+    "Body Actions": {
+        "desc": "Students show energetic physical movements.",
+        "3": "Shows very energetic movements",
+        "2": "Shows somewhat energetic movements",
+        "1": "Lacks energy in movements"
+    },
+    "Body Posture": {
+        "desc": "Students maintain upright, confident posture without slouching.",
+        "3": "Maintains perfect posture",
+        "2": "Posture is mostly upright",
+        "1": "Often slouches or has poor posture"
+    },
+    "Eye Contact": {
+        "desc": "Students maintain consistent eye contact with audience, avoiding unnecessary movements.",
+        "3": "Maintains strong eye contact",
+        "2": "Maintains some eye contact",
+        "1": "Avoids eye contact"
+    },
+    "Energy": {
+        "desc": "Students demonstrate energy through voice volume and hand gestures.",
+        "3": "Demonstrates high energy",
+        "2": "Shows some energy",
+        "1": "Lacks energy"
+    },
+    "Facial Expression": {
+        "desc": "Students use appropriate facial expressions to convey emotions and reactions.",
+        "3": "Demonstrates 2-3 expressive and appropriate facial expressions",
+        "2": "Demonstrates 1-2 facial expressions with limited expressiveness",
+        "1": "Demonstrates no or inappropriate facial expressions"
+    },
+    "Speaking Clarity": {
+        "desc": "Students speak clearly and articulately, without mumbling.",
+        "3": "Speaks very clearly",
+        "2": "Speaks somewhat clearly",
+        "1": "Often mumbles or is unclear"
+    },
+    "Intonation": {
+        "desc": "Students vary their voice tone, using high and low pitches to convey ideas.",
+        "3": "Varies voice tone effectively",
+        "2": "Occasionally varies voice tone",
+        "1": "Monotone, lacks variation"
+    },
+    "Fluency": {
+        "desc": "Students speak smoothly without unnecessary pauses or fillers.",
+        "3": "Speaks fluently with minimal pauses or hesitations",
+        "2": "Speaks with some pauses or hesitations",
+        "1": "Frequently pauses or hesitates while speaking"
+    },
+    "Voice Character": {
+        "desc": "Students vary voice tone, pitch, and volume to match character in speech/role play.",
+        "3": "Uses 2-3 different voice tones for different characters effectively",
+        "2": "Uses 1-2 different voice tones with limited effectiveness",
+        "1": "Uses the same voice tone for all characters"
+    },
+    "Action Demonstration": {
+        "desc": "Students explain ideas clearly and demonstrate understanding through examples/actions.",
+        "3": "Answers all action demonstration questions",
+        "2": "Answers all action demonstration questions (> 75%)",
+        "1": "Answers all action demonstration questions (50% - 75%)"
+    },
+    "Props": {
+        "desc": "Students effectively use props to enhance their demonstration or role play.",
+        "3": "Creative and effective use of props",
+        "2": "Somewhat effective use of props",
+        "1": "Minimal or ineffective use of props"
+    },
+    "Self Explanation": {
+        "desc": "Students clearly articulate their thought process and reasoning behind actions/answers.",
+        "3": "Provides detailed explanations with thorough reasoning (3-4 sentences)",
+        "2": "Provides explanations with some detail and reasoning (2-3 sentences)",
+        "1": "Provides brief and unclear explanations with limited reasoning (1-2 sentences)"
+    },
+    "Role Play": {
+        "desc": "Students create and perform role plays based on given contexts, staying in character.",
+        "3": "Creates role play scenarios creatively and independently without guidance",
+        "2": "Creates role play scenarios with some creativity but requires occasional guidance",
+        "1": "Cannot create role play scenarios and needs significant guidance"
+    },
+    "Application Sharing": {
+        "desc": "Students share real-life applications or examples related to topic.",
+        "3": "Answers all real-life application questions and assessment activities",
+        "2": "Answers all real-life application questions (> 75%)",
+        "1": "Answers all real-life application questions (50% - 75%)"
+    },
+    "Audience Engagement": {
+        "desc": "Students actively connect with the audience through rhetorical questions and stage presence.",
+        "3": "Actively engages and connects with audience throughout; highly compelling",
+        "2": "Moderately engages audience with some effectiveness",
+        "1": "Minimal or no audience engagement; delivers monologue"
+    },
+    "X-Factor & Stage Command": {
+        "desc": "Demonstrates exceptional charisma, stage command, and distinctive personal style.",
+        "3": "Captivating charisma and distinctive flair leaving a memorable impression",
+        "2": "Confident stage presence with emerging personal style",
+        "1": "Mechanical delivery; lacks stage presence or individuality"
+    }
+}
+
+GRADE_ELEMENTS = {
+    "1": ["Body Actions", "Body Posture", "Speaking Clarity"],
+    "2": ["Body Actions", "Body Posture", "Speaking Clarity", "Eye Contact", "Intonation", "Energy", "Action Demonstration"],
+    "3": ["Body Actions", "Body Posture", "Speaking Clarity", "Eye Contact", "Intonation", "Energy", "Action Demonstration", "Fluency", "Props", "Self Explanation", "Role Play", "Application Sharing"],
+    "4": ["Body Actions", "Body Posture", "Eye Contact", "Energy", "Facial Expression", "Speaking Clarity", "Intonation", "Voice Character", "Fluency", "Action Demonstration", "Props", "Self Explanation", "Role Play", "Application Sharing"],
+    "5": ["Body Actions", "Body Posture", "Eye Contact", "Energy", "Facial Expression", "Speaking Clarity", "Intonation", "Voice Character", "Fluency", "Action Demonstration", "Props", "Self Explanation", "Role Play", "Application Sharing", "Audience Engagement"],
+    "6": ["Body Actions", "Body Posture", "Eye Contact", "Energy", "Facial Expression", "Speaking Clarity", "Intonation", "Voice Character", "Fluency", "Action Demonstration", "Props", "Self Explanation", "Role Play", "Application Sharing", "Audience Engagement", "X-Factor & Stage Command"]
+}
+
+def build_evaluation_prompt(grade: str, student: str, theme: str):
+    grade_num = "".join(filter(str.isdigit, grade)) or "1"
+    elements = GRADE_ELEMENTS.get(grade_num, GRADE_ELEMENTS["1"])
+    max_score = len(elements) * 3
+    pass_threshold = int(max_score * 0.70)
+
+    rubric_text = ""
+    for idx, el in enumerate(elements, start=1):
+        info = MASTER_CRITERIA[el]
+        rubric_text += f"{idx}. {el}\n   - Standard: {info['desc']}\n   - 3 Points: {info['3']}\n   - 2 Points: {info['2']}\n   - 1 Point: {info['1']}\n"
+
+    prompt = f"""Role: Official Head Adjudicator for Deemcee Public Speaking Center.
+Task: Rigorously evaluate speech performance for {student} (Grade {grade_num}, Theme: "{theme}").
+
+OFFICIAL 1-3 POINT SCORING RUBRIC FOR GRADE {grade_num}:
+{rubric_text}
+
+SCORING INSTRUCTIONS:
+1. Score EVERY element strictly as 1, 2, or 3 points based on the explicit criteria above. No half-points.
+2. In the "feedback" field, you MUST provide precise timestamp evidence (e.g., "@ 0:24 - ...") explaining why the student earned a 1, 2, or 3.
+3. Calculate "totalScore" by summing the scores of all {len(elements)} elements. Max score is {max_score}.
+4. "advanceRecommendation": Set strictly to "Yes" if totalScore >= {pass_threshold}, otherwise "Needs Practice".
+5. Provide a warm, empowering summary and a 2-step actionable Kaizen growth plan.
+6. Create an engaging bilingual (English & Chinese) social media caption highlighting their strongest elements.
+
+Respond strictly in valid JSON matching this structure:
+{{
+  "studentName": "{student}",
+  "gradeLevel": "Grade {grade_num}",
+  "speechTheme": "{theme}",
+  "encouragingSummary": "Empowering feedback with timestamp highlights",
+  "elements": [
+    {{
+      "elementName": "Body Actions",
+      "score": 3,
+      "feedback": "Shows very energetic physical gestures when describing the airplane @ 0:18."
+    }}
+  ],
+  "totalScore": {pass_threshold + 2},
+  "maxScore": {max_score},
+  "advanceRecommendation": "Yes",
+  "actionPlan": [
+    "Tip 1: ...",
+    "Tip 2: ..."
+  ],
+  "socialMediaCaption": "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} ✈️\\n\\n[Bilingual AEM body]\\n\\n{DEEMCEE_HASHTAGS}"
+}}"""
+    return prompt
+
 def evaluate_speech_with_gemini(video_path: str):
     if not GEMINI_API_KEY or not os.path.exists(video_path):
         return None
@@ -107,40 +263,8 @@ def evaluate_speech_with_gemini(video_path: str):
             chk = requests.get(check_url).json()
             if chk.get("state") == "ACTIVE":
                 break
-        
-        rubrics = {
-            "1": "body action, body posture, speaking clarity",
-            "2": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration",
-            "3": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration, fluency, props, self-explaination, role play and application sharing",
-            "4": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration, fluency, props, self-explaination, role play, application sharing, voice character and facial expression",
-            "5": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration, fluency, props, self-explaination, role play, application sharing, voice character, facial expression and audience engagement",
-            "6": "body action, body posture, speaking clarity, eye contact, intonation, energy, action demonstration, fluency, props, self-explaination, role play, application sharing, voice character, facial expression, audience engagement and x-factor"
-        }
-        selected_rubric = rubrics.get(GRADE_LEVEL, rubrics["1"])
 
-        system_instruction = f"""Role: Expert public speaking evaluator for the Deemcee programme.
-Task: Evaluate student speech video for {STUDENT_NAME} (Grade {GRADE_LEVEL}, Theme: "{THEME}").
-Rubric: [{selected_rubric}].
-Scoring: Strictly 1 to 10 for each element with timestamps.
-
-You must generate an encouraging bilingual (English & Chinese) social media caption that strictly includes these exact hashtags:
-"{DEEMCEE_HASHTAGS}"
-
-Respond strictly in valid JSON matching:
-{{
-  "studentName": "{STUDENT_NAME}",
-  "gradeLevel": "Grade {GRADE_LEVEL}",
-  "speechTheme": "{THEME}",
-  "encouragingSummary": "Summary with timestamp evidence",
-  "elements": [
-    {{ "elementName": "Body Action", "score": 9, "feedback": "Feedback with timestamps" }}
-  ],
-  "totalScore": 25,
-  "maxScore": 30,
-  "advanceRecommendation": "Yes",
-  "actionPlan": ["Actionable tip 1", "Actionable tip 2"],
-  "socialMediaCaption": "Encouraging bilingual English & Chinese caption\\n\\n{DEEMCEE_HASHTAGS}"
-}}"""
+        system_instruction = build_evaluation_prompt(GRADE_LEVEL, STUDENT_NAME, THEME)
 
         gen_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
         payload = {
@@ -149,7 +273,7 @@ Respond strictly in valid JSON matching:
                 "role": "user",
                 "parts": [
                     {"file_data": {"mime_type": "video/mp4", "file_uri": video_uri}},
-                    {"text": "Evaluate the speech video and output only the required JSON."}
+                    {"text": "Evaluate speech against Deemcee 1-3 point rubric and return JSON only."}
                 ]
             }],
             "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
@@ -158,9 +282,8 @@ Respond strictly in valid JSON matching:
         gen_res = requests.post(gen_url, json=payload).json()
         eval_json_text = gen_res["candidates"][0]["content"]["parts"][0]["text"]
         eval_data = json.loads(eval_json_text)
-        log("✅ Gemini Evaluation & Caption complete!")
+        log("✅ Deemcee 1-3 Point Evaluation & Social Caption complete!")
 
-        # Send evaluation and caption back to Apps Script to generate Google Docs in Drive
         if WEBAPP_URL:
             try:
                 res = requests.post(WEBAPP_URL, json={
@@ -197,7 +320,6 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
         img = Image.open(SAMPLE_FRAME).convert("RGB")
         w, h = img.size
 
-        # Sample across multiple points (corners, top, upper thirds, sides)
         sample_points = [
             (int(w * 0.05), int(h * 0.05)),
             (int(w * 0.95), int(h * 0.05)),
@@ -215,16 +337,14 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
         green_samples = []
         for x, y in sample_points:
             r, g, b = img.getpixel((x, y))
-            # Green channel must dominate
             if g > r and g > b:
                 green_samples.append((r, g, b))
 
         if len(green_samples) > 0:
             count = len(green_samples)
             avg_r = int(sum(item[0] for item in green_samples) / count)
-            avg_g = int(sum(item for item in green_samples) / count)
-            avg_b = int(sum(item for item in green_samples) / count)
-
+            avg_g = int(sum(item[1] for item in green_samples) / count)
+            avg_b = int(sum(item[2] for item in green_samples) / count)
             detected_hex = f"0x{avg_r:02X}{avg_g:02X}{avg_b:02X}"
             log(f"🎯 Auto-Detected Green Screen Color: {detected_hex} (RGB: {avg_r}, {avg_g}, {avg_b})")
             return detected_hex
@@ -284,11 +404,9 @@ def upload_directly_to_google_drive(video_path: str, folder_id: str):
             log(f"🔗 Google Drive Video Link: {web_link}")
             log("=====================================================")
 
-            # Set public view permission
             perm_url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
             requests.post(perm_url, headers={"Authorization": f"Bearer {DRIVE_TOKEN}"}, json={"role": "reader", "type": "anyone"}, timeout=15)
 
-            # Update Deemcee Status Board with final video link
             if WEBAPP_URL:
                 try:
                     requests.post(WEBAPP_URL, json={"action": "video_completed", "video_url": web_link}, timeout=15, allow_redirects=True)
@@ -386,7 +504,7 @@ def normalize_clip(input_path, output_path, step_name):
     run_ffmpeg_command(cmd, step_name)
 
 # ==========================================
-# 7. MAIN VIDEO COMPOSITOR (YUV CHROMAKEY SHADOW TOLERANT)
+# 7. MAIN VIDEO COMPOSITOR
 # ==========================================
 def process_video():
     has_raw = download_drive_file(RAW_VIDEO_ID, RAW_VIDEO)
@@ -399,16 +517,11 @@ def process_video():
         log("❌ Cannot proceed without raw speech video.")
         return
 
-    # Step 1: Run Gemini Speech Evaluation & Build Docs in Drive
     evaluate_speech_with_gemini(RAW_VIDEO)
-
-    # Step 2: Auto-detect exact green screen color from this specific recording
     detected_color = auto_detect_greenscreen_color(RAW_VIDEO)
-
     has_bg, has_logo = sanitize_images()
     temp_keyed = "temp_keyed.mp4"
 
-    # Step 3: YUV Chroma Key (Removes shadows/uneven light at ceiling) + Branding
     log("🎬 Step 3: Processing YUV Chroma Key & Branding...")
     if has_bg and has_logo:
         filter_complex = (
@@ -476,7 +589,6 @@ def process_video():
     run_ffmpeg_command(cmd1, "Chroma Key & Branding")
     log("✅ Chroma Key step complete!")
 
-    # Step 4: Normalize Intro & Outro and Stitch
     if has_intro and has_outro:
         normalize_clip(INTRO_VIDEO, "norm_intro.mp4", "Intro Video")
         normalize_clip(OUTRO_VIDEO, "norm_outro.mp4", "Outro Video")
@@ -496,8 +608,6 @@ def process_video():
         os.rename(temp_keyed, FINAL_OUTPUT)
 
     log(f"🎉 16:9 Final Video Ready: {FINAL_OUTPUT} ({os.path.getsize(FINAL_OUTPUT)} bytes)")
-
-    # Step 5: Direct API Upload to Final Deliverables in Google Drive
     upload_directly_to_google_drive(FINAL_OUTPUT, FINISHED_FOLDER_ID)
 
 if __name__ == "__main__":
