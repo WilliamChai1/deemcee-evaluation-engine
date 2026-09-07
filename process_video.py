@@ -65,7 +65,7 @@ def download_drive_file(file_id: str, dest_path: str):
         return False
 
 # ==========================================
-# 2. OFFICIAL DEEMCEE 1-3 POINT EVALUATION ENGINE (AEM FORMAT)
+# 2. OFFICIAL DEEMCEE EVALUATION & NATURAL SOCIAL CAPTION
 # ==========================================
 MASTER_CRITERIA = {
     "Body Actions": {
@@ -186,25 +186,29 @@ def build_evaluation_prompt(grade: str, student: str, theme: str):
         info = MASTER_CRITERIA[el]
         rubric_text += f"{idx}. {el}\n   - Standard: {info['desc']}\n   - 3 Points: {info['3']}\n   - 2 Points: {info['2']}\n   - 1 Point: {info['1']}\n"
 
-    prompt = f"""Role: Official Head Adjudicator for Deemcee Public Speaking Center.
+    prompt = f"""Role: Official Head Adjudicator & Lead Copywriter for Deemcee Public Speaking Center.
 Task: Rigorously evaluate speech performance for {student} (Grade {grade_num}, Theme: "{theme}").
 
 OFFICIAL 1-3 POINT SCORING RUBRIC FOR GRADE {grade_num}:
 {rubric_text}
 
-SCORING RULES:
+SCORING RULES (FOR OFFICIAL EVALUATION REPORT ONLY):
 1. Score EVERY element strictly as 1, 2, or 3 points based on the explicit criteria above.
-2. In the "feedback" field, you MUST provide precise timestamp evidence (e.g., "@ 0:18 - ...") explaining why the student earned a 1, 2, or 3.
+2. In the "feedback" field for the elements array, provide precise timestamp evidence (e.g., "@ 0:18 - ...") explaining why the student earned a 1, 2, or 3.
 3. Calculate "totalScore" by summing the scores of all {len(elements)} elements (Max: {max_score}).
 4. "advanceRecommendation": Set strictly to "Yes" if totalScore >= {pass_threshold}, otherwise "Needs Practice".
 5. Provide an empowering summary and a 2-step actionable Kaizen growth plan.
 
-SOCIAL MEDIA CAPTION RULES (STRICT AEM FORMAT):
-You must craft a detailed, encouraging, bilingual (English & Chinese) social media caption structured exactly in the Deemcee AEM Format:
-- [A - Acknowledge]: Celebrate {student} taking the stage to embody their theme "{theme}" with courage and enthusiasm.
-- [E - Encourage]: Identify the student's top-scoring elements (MAXIMUM 5 ELEMENTS). Detail exactly what they did well in each element with timestamp evidence from their performance.
-- [M - Motivate]: Inspire {student} to keep shining and cultivating their public speaking superpower.
-- End the caption with the official hashtags:
+SOCIAL MEDIA CAPTION RULES (STRICT REQUIREMENTS):
+1. LANGUAGE: 100% ENGLISH ONLY. Do NOT write any Chinese or Mandarin characters.
+2. NO STRUCTURAL LABELS: Absolutely DO NOT include "[A - Acknowledge]", "[E - Encourage]", "[M - Motivate]", or any bracketed workflow tags.
+3. NO TIMESTAMPS: Absolutely DO NOT include any timestamps (no "@ 0:15", "(@ 0:03)", etc.) in the social media caption.
+4. NATURAL AEM STORYTELLING FLOW:
+   - Header: Start with "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} 🎙️✨".
+   - Opening (Acknowledge): Naturally celebrate {student} stepping up onto the Deemcee stage with courage, enthusiasm, and dedication to present as a {theme}.
+   - Body (Encourage): Seamlessly highlight their top performance strengths (choose the MAXIMUM 5 highest-scoring elements). Describe in rich, natural, conversational sentences what makes their performance stand out (e.g., how their energetic hand gestures brought the story alive, how their confident posture commanded the room, or how clearly their voice resonated). Do not make a dry list—weave it into engaging paragraphs.
+   - Closing (Motivate): An inspiring send-off cheering them on for their ongoing public speaking journey and celebrating their confidence growth.
+5. End directly with the official hashtags:
 {DEEMCEE_HASHTAGS}
 
 Respond strictly in valid JSON matching:
@@ -212,7 +216,7 @@ Respond strictly in valid JSON matching:
   "studentName": "{student}",
   "gradeLevel": "Grade {grade_num}",
   "speechTheme": "{theme}",
-  "encouragingSummary": "Empowering summary with timestamps",
+  "encouragingSummary": "Empowering summary with timestamps for official report",
   "elements": [
     {{
       "elementName": "Body Actions",
@@ -227,7 +231,7 @@ Respond strictly in valid JSON matching:
     "Tip 1: ...",
     "Tip 2: ..."
   ],
-  "socialMediaCaption": "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} 🎙️✨\\n\\n[A - Acknowledge paragraph in EN & CN]\\n\\n[E - Detailed Encourage breakdown of max 5 top elements with timestamps in EN & CN]\\n\\n[M - Motivate closing in EN & CN]\\n\\n{DEEMCEE_HASHTAGS}"
+  "socialMediaCaption": "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} 🎙️✨\\n\\nLet's give a huge round of applause to {student} for stepping onto the Deemcee stage with incredible courage and enthusiasm to share what it takes to be a {theme}!\\n\\n{student} delivered an inspiring speech, showcasing wonderful public speaking skills. Their speaking clarity was outstanding from start to finish, ensuring every word was articulate and easy to follow. Paired with a strong, upright posture that held everyone's attention, their energetic hand gestures and expressive intonation brought wonderful color and life to the stage!\\n\\nKeep shining bright, {student}! Your dedication and vibrant confidence show what a remarkable communicator you are becoming. We can't wait to see you conquer your next speaking adventure! 🌟🎉\\n\\n{DEEMCEE_HASHTAGS}"
 }}"""
     return prompt
 
@@ -280,7 +284,7 @@ def evaluate_speech_with_gemini(video_path: str):
                 "role": "user",
                 "parts": [
                     {"file_data": {"mime_type": "video/mp4", "file_uri": video_uri}},
-                    {"text": "Evaluate speech against Deemcee standards and produce AEM social media caption."}
+                    {"text": "Evaluate speech against Deemcee standards and generate the natural English social caption."}
                 ]
             }],
             "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
@@ -289,7 +293,7 @@ def evaluate_speech_with_gemini(video_path: str):
         gen_res = requests.post(gen_url, json=payload).json()
         eval_json_text = gen_res["candidates"][0]["content"]["parts"][0]["text"]
         eval_data = json.loads(eval_json_text)
-        log("✅ Deemcee AEM Evaluation & Caption complete!")
+        log("✅ Deemcee Natural AEM Evaluation & Caption complete!")
 
         if WEBAPP_URL:
             try:
@@ -316,10 +320,17 @@ def evaluate_speech_with_gemini(video_path: str):
 def auto_detect_greenscreen_color(video_path: str) -> str:
     log("🔍 Step 2: Analyzing video to auto-detect exact green screen color...")
     try:
+        # Sample at 3.0s to bypass dark intro frames and catch the student actively on stage
         subprocess.run([
-            "ffmpeg", "-y", "-ss", "00:00:00.500", "-i", video_path,
+            "ffmpeg", "-y", "-ss", "00:00:03.000", "-i", video_path,
             "-vframes", "1", SAMPLE_FRAME
         ], capture_output=True, text=True)
+
+        if not os.path.exists(SAMPLE_FRAME) or os.path.getsize(SAMPLE_FRAME) < 1000:
+            subprocess.run([
+                "ffmpeg", "-y", "-ss", "00:00:01.000", "-i", video_path,
+                "-vframes", "1", SAMPLE_FRAME
+            ], capture_output=True, text=True)
 
         if not os.path.exists(SAMPLE_FRAME):
             return "0x00B800"
@@ -328,17 +339,15 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
         w, h = img.size
 
         sample_points = [
-            (int(w * 0.05), int(h * 0.05)),
-            (int(w * 0.95), int(h * 0.05)),
-            (int(w * 0.50), int(h * 0.05)),
-            (int(w * 0.25), int(h * 0.05)),
-            (int(w * 0.75), int(h * 0.05)),
-            (int(w * 0.05), int(h * 0.20)),
-            (int(w * 0.95), int(h * 0.20)),
-            (int(w * 0.05), int(h * 0.35)),
-            (int(w * 0.95), int(h * 0.35)),
-            (int(w * 0.05), int(h * 0.50)),
-            (int(w * 0.95), int(h * 0.50)),
+            (int(w * 0.08), int(h * 0.08)),
+            (int(w * 0.92), int(h * 0.08)),
+            (int(w * 0.50), int(h * 0.08)),
+            (int(w * 0.25), int(h * 0.08)),
+            (int(w * 0.75), int(h * 0.08)),
+            (int(w * 0.08), int(h * 0.25)),
+            (int(w * 0.92), int(h * 0.25)),
+            (int(w * 0.08), int(h * 0.40)),
+            (int(w * 0.92), int(h * 0.40)),
         ]
 
         green_samples = []
@@ -362,9 +371,10 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
         return "0x00B800"
 
 def calculate_auto_centering_and_zoom(detected_hex: str) -> str:
-    """Detects child's position and sizes them to ~68% of screen height in center."""
+    """Detects student and scales them up so they fill ~82% of screen height in center."""
     if not os.path.exists(SAMPLE_FRAME):
-        return ""
+        return "crop=1344:756:288:260,"  # Default fallback 1.42x center zoom
+
     try:
         img = Image.open(SAMPLE_FRAME).convert("RGB")
         w, h = img.size
@@ -376,46 +386,64 @@ def calculate_auto_centering_and_zoom(detected_hex: str) -> str:
         non_green_x = []
         non_green_y = []
 
-        for y in range(0, h, 6):
-            for x in range(0, w, 6):
+        # Ignore outer 6% frame perimeter to avoid backdrop stands and floor cables
+        margin_x = int(w * 0.06)
+        margin_y = int(h * 0.05)
+
+        for y in range(margin_y, h - margin_y, 6):
+            for x in range(margin_x, w - margin_x, 6):
                 r, g, b = img.getpixel((x, y))
-                is_green = (g > r * 1.15 and g > b * 1.15) or (abs(g - target_g) < 30 and abs(r - target_r) < 30 and abs(b - target_b) < 30)
-                if not is_green:
+
+                # Identify green background
+                is_green = (g > 55 and g > r * 1.15 and g > b * 1.15) or \
+                           (abs(g - target_g) < 40 and abs(r - target_r) < 40 and abs(b - target_b) < 40)
+                
+                # Ignore dark shadows/corners
+                is_shadow = (r < 25 and g < 25 and b < 25)
+
+                if not is_green and not is_shadow:
                     non_green_x.append(x)
                     non_green_y.append(y)
 
-        if len(non_green_x) > 150:
+        if len(non_green_x) > 120:
             non_green_x.sort()
             non_green_y.sort()
-            min_x = non_green_x[int(len(non_green_x) * 0.03)]
-            max_x = non_green_x[int(len(non_green_x) * 0.97)]
-            min_y = non_green_y[int(len(non_green_y) * 0.02)]
-            max_y = non_green_y[int(len(non_green_y) * 0.98)]
+            min_x = non_green_x[int(len(non_green_x) * 0.04)]
+            max_x = non_green_x[int(len(non_green_x) * 0.96)]
+            min_y = non_green_y[int(len(non_green_y) * 0.03)]
+            max_y = non_green_y[int(len(non_green_y) * 0.97)]
 
-            child_w = max_x - min_x
             child_h = max_y - min_y
             center_x = (min_x + max_x) // 2
 
-            # Standardize child height to ~68% of frame height
-            desired_crop_h = int(child_h / 0.68)
-            desired_crop_h = min(h, max(desired_crop_h, int(h * 0.55)))
+            # Scale student so they fill ~82% of vertical frame
+            desired_crop_h = int(child_h / 0.82)
+            # Ensure crop stays within reasonable bounds (between 48% and 82% of raw height)
+            desired_crop_h = max(int(h * 0.48), min(int(h * 0.82), desired_crop_h))
             desired_crop_w = int(desired_crop_h * (16 / 9))
 
             if desired_crop_w > w:
                 desired_crop_w = w
                 desired_crop_h = int(w * (9 / 16))
 
-            crop_y = max(0, min_y - int(desired_crop_h * 0.12))
+            # Leave 8% headroom above the student's head
+            crop_y = max(0, min_y - int(desired_crop_h * 0.08))
             if crop_y + desired_crop_h > h:
                 crop_y = max(0, h - desired_crop_h)
 
             crop_x = max(0, min(w - desired_crop_w, center_x - (desired_crop_w // 2)))
 
-            log(f"📐 Auto-Framing: Centering student at X={center_x}, Cropping {desired_crop_w}x{desired_crop_h} to scale size up naturally.")
+            log(f"📐 Auto-Framing Active: Centering student at X={center_x}, Cropping {desired_crop_w}x{desired_crop_h} to fill background naturally.")
             return f"crop={desired_crop_w}:{desired_crop_h}:{crop_x}:{crop_y},"
     except Exception as e:
         log(f"Auto-framing calculation note: {e}")
-    return ""
+
+    # Fallback to an intentional 1.40x zoom so distant kids are never miniature
+    default_h = int(1080 / 1.40)
+    default_w = int(default_h * 16 / 9)
+    default_x = (1920 - default_w) // 2
+    default_y = max(0, 1080 - default_h - 40)
+    return f"crop={default_w}:{default_h}:{default_x}:{default_y},"
 
 # ==========================================
 # 4. UPLOAD FINAL 16:9 VIDEO TO GOOGLE DRIVE
@@ -590,7 +618,7 @@ def process_video():
     has_bg, has_logo = sanitize_images()
     temp_keyed = "temp_keyed.mp4"
 
-    # Step 3: Precise Opacity Chromakey (0.06:0.08) - No Ghosting + Centered & Scaled Student
+    # Step 3: Precise Opacity Chromakey (0.06:0.08) - No Ghosting + Natural Screen-Fill
     log("🎬 Step 3: Processing Chroma Key & Branding...")
     if has_bg and has_logo:
         filter_complex = (
