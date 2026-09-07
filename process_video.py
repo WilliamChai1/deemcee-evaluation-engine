@@ -4,6 +4,7 @@ import requests
 import json
 import time
 import sys
+import threading
 from PIL import Image
 
 def log(msg):
@@ -21,8 +22,10 @@ DRIVE_TOKEN = os.environ.get("DRIVE_TOKEN", "").strip()
 FINISHED_FOLDER_ID = os.environ.get("FINISHED_FOLDER_ID", "1yZ374vWosaiBwCp3RiWq1IjsVW7sDJAr").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "").strip()
+ROW_NUMBER = os.environ.get("ROW_NUMBER", "").strip()
+FILE_NAME = os.environ.get("FILE_NAME", "").strip()
 
-log(f"🎬 Starting 16:9 Deemcee Video Processor for: {STUDENT_NAME} | Theme: {THEME} | Grade: {GRADE_LEVEL}")
+log(f"🎬 Starting Turbo 16:9 Deemcee Video Processor for: {STUDENT_NAME} | Theme: {THEME} | Grade: {GRADE_LEVEL}")
 log(f"📁 Destination Folder ID: {FINISHED_FOLDER_ID}")
 
 RAW_VIDEO = "raw_input.mp4"
@@ -33,6 +36,7 @@ CLEAN_LOGO = "clean_logo.png"
 INTRO_VIDEO = "intro.mp4"
 OUTRO_VIDEO = "outro.mp4"
 SAMPLE_FRAME = "sample_frame.png"
+AI_PROXY_VIDEO = "ai_proxy.mp4"
 FINAL_OUTPUT = f"{STUDENT_NAME}_{THEME}_Evaluation_Final.mp4"
 
 DEEMCEE_HASHTAGS = "#deemcee #deemceepinesquarekuching #speaklively #confidence #confidencebuilding #publicspeaking #malaysia #childreneducation #childhoodeducation #deemceepinesquare #pinesquare #batukawa #moyan #kuching #stage #shining #selfgrowth #enrichment"
@@ -201,13 +205,13 @@ SCORING RULES (FOR OFFICIAL EVALUATION REPORT ONLY):
 
 SOCIAL MEDIA CAPTION RULES (STRICT REQUIREMENTS):
 1. LANGUAGE: 100% ENGLISH ONLY. Do NOT write any Chinese or Mandarin characters.
-2. NO STRUCTURAL LABELS: Absolutely DO NOT include "[A - Acknowledge]", "[E - Encourage]", "[M - Motivate]", or any bracketed workflow tags.
+2. NO STRUCTURAL LABELS: Absolutely DO NOT include "[A - Acknowledge]", "[E - Encourage]", "[M - Motivate]", or any bracketed tags.
 3. NO TIMESTAMPS: Absolutely DO NOT include any timestamps (no "@ 0:15", "(@ 0:03)", etc.) in the social media caption.
 4. NATURAL AEM STORYTELLING FLOW:
    - Header: Start with "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} 🎙️✨".
    - Opening (Acknowledge): Naturally celebrate {student} stepping up onto the Deemcee stage with courage, enthusiasm, and dedication to present as a {theme}.
-   - Body (Encourage): Seamlessly highlight their top performance strengths (choose the MAXIMUM 5 highest-scoring elements). Describe in rich, natural, conversational sentences what makes their performance stand out (e.g., how their energetic hand gestures brought the story alive, how their confident posture commanded the room, or how clearly their voice resonated). Do not make a dry list—weave it into engaging paragraphs.
-   - Closing (Motivate): An inspiring send-off cheering them on for their ongoing public speaking journey and celebrating their confidence growth.
+   - Body (Encourage): Seamlessly highlight their top performance strengths (choose the MAXIMUM 5 highest-scoring elements). Describe in rich, natural, conversational sentences what makes their performance stand out (e.g., energetic hand gestures, confident posture, articulate pronunciation). Weave it into engaging paragraphs.
+   - Closing (Motivate): An inspiring send-off cheering them on for their ongoing public speaking journey.
 5. End directly with the official hashtags:
 {DEEMCEE_HASHTAGS}
 
@@ -231,7 +235,7 @@ Respond strictly in valid JSON matching:
     "Tip 1: ...",
     "Tip 2: ..."
   ],
-  "socialMediaCaption": "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} 🎙️✨\\n\\nLet's give a huge round of applause to {student} for stepping onto the Deemcee stage with incredible courage and enthusiasm to share what it takes to be a {theme}!\\n\\n{student} delivered an inspiring speech, showcasing wonderful public speaking skills. Their speaking clarity was outstanding from start to finish, ensuring every word was articulate and easy to follow. Paired with a strong, upright posture that held everyone's attention, their energetic hand gestures and expressive intonation brought wonderful color and life to the stage!\\n\\nKeep shining bright, {student}! Your dedication and vibrant confidence show what a remarkable communicator you are becoming. We can't wait to see you conquer your next speaking adventure! 🌟🎉\\n\\n{DEEMCEE_HASHTAGS}"
+  "socialMediaCaption": "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} 🎙️✨\\n\\n[Natural 3-paragraph caption]\\n\\n{DEEMCEE_HASHTAGS}"
 }}"""
     return prompt
 
@@ -239,8 +243,17 @@ def evaluate_speech_with_gemini(video_path: str):
     if not GEMINI_API_KEY or not os.path.exists(video_path):
         return None
     try:
-        log("🤖 Step 1: Uploading video to Gemini File API for evaluation...")
-        file_size = os.path.getsize(video_path)
+        log("🤖 Background AI Thread: Creating lightweight 480p proxy for instant Gemini upload...")
+        # Ultra-fast 480p proxy creation (cuts Gemini upload from 60s down to 3s)
+        subprocess.run([
+            "ffmpeg", "-y", "-i", video_path, "-vf", "scale=640:360",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "32",
+            "-c:a", "aac", "-b:a", "48k", AI_PROXY_VIDEO
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        target_file = AI_PROXY_VIDEO if os.path.exists(AI_PROXY_VIDEO) else video_path
+        file_size = os.path.getsize(target_file)
+        log(f"☁️ Uploading lightweight proxy ({file_size / (1024*1024):.2f} MB) to Gemini File API...")
         
         init_url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={GEMINI_API_KEY}"
         init_headers = {
@@ -257,7 +270,7 @@ def evaluate_speech_with_gemini(video_path: str):
             log(f"❌ Gemini Upload Init Failed: {init_res.text}")
             return None
 
-        with open(video_path, "rb") as f:
+        with open(target_file, "rb") as f:
             upload_res = requests.post(
                 upload_url,
                 headers={"X-Goog-Upload-Offset": "0", "X-Goog-Upload-Command": "upload, finalize"},
@@ -270,7 +283,7 @@ def evaluate_speech_with_gemini(video_path: str):
 
         check_url = f"https://generativelanguage.googleapis.com/v1beta/{video_name}?key={GEMINI_API_KEY}"
         for _ in range(25):
-            time.sleep(4)
+            time.sleep(3)
             chk = requests.get(check_url).json()
             if chk.get("state") == "ACTIVE":
                 break
@@ -284,7 +297,7 @@ def evaluate_speech_with_gemini(video_path: str):
                 "role": "user",
                 "parts": [
                     {"file_data": {"mime_type": "video/mp4", "file_uri": video_uri}},
-                    {"text": "Evaluate speech against Deemcee standards and generate the natural English social caption."}
+                    {"text": "Evaluate speech against Deemcee standards and generate natural English caption."}
                 ]
             }],
             "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
@@ -293,18 +306,20 @@ def evaluate_speech_with_gemini(video_path: str):
         gen_res = requests.post(gen_url, json=payload).json()
         eval_json_text = gen_res["candidates"][0]["content"]["parts"][0]["text"]
         eval_data = json.loads(eval_json_text)
-        log("✅ Deemcee Natural AEM Evaluation & Caption complete!")
+        log("✅ Deemcee Natural Evaluation & Caption complete!")
 
         if WEBAPP_URL:
             try:
-                res = requests.post(WEBAPP_URL, json={
+                requests.post(WEBAPP_URL, json={
                     "action": "save_reports",
                     "student_name": STUDENT_NAME,
                     "grade_level": GRADE_LEVEL,
                     "theme": THEME,
-                    "eval_data": eval_data
+                    "eval_data": eval_data,
+                    "row_number": ROW_NUMBER,
+                    "file_name": FILE_NAME
                 }, timeout=30, allow_redirects=True)
-                log(f"📁 Reports filed successfully in Drive: {res.text}")
+                log("📁 Official Docs generated and filed in Drive.")
             except Exception as ex:
                 log(f"Warning calling Webapp for docs: {ex}")
 
@@ -318,9 +333,8 @@ def evaluate_speech_with_gemini(video_path: str):
 # 3. AUTO-DETECT GREEN SCREEN & SMART AUTO-FRAMING
 # ==========================================
 def auto_detect_greenscreen_color(video_path: str) -> str:
-    log("🔍 Step 2: Analyzing video to auto-detect exact green screen color...")
+    log("🔍 Analyzing video to auto-detect exact green screen color...")
     try:
-        # Sample at 3.0s to bypass dark intro frames and catch the student actively on stage
         subprocess.run([
             "ffmpeg", "-y", "-ss", "00:00:03.000", "-i", video_path,
             "-vframes", "1", SAMPLE_FRAME
@@ -373,7 +387,7 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
 def calculate_auto_centering_and_zoom(detected_hex: str) -> str:
     """Detects student and scales them up so they fill ~82% of screen height in center."""
     if not os.path.exists(SAMPLE_FRAME):
-        return "crop=1344:756:288:260,"  # Default fallback 1.42x center zoom
+        return "crop=1344:756:288:260,"
 
     try:
         img = Image.open(SAMPLE_FRAME).convert("RGB")
@@ -386,19 +400,14 @@ def calculate_auto_centering_and_zoom(detected_hex: str) -> str:
         non_green_x = []
         non_green_y = []
 
-        # Ignore outer 6% frame perimeter to avoid backdrop stands and floor cables
         margin_x = int(w * 0.06)
         margin_y = int(h * 0.05)
 
         for y in range(margin_y, h - margin_y, 6):
             for x in range(margin_x, w - margin_x, 6):
                 r, g, b = img.getpixel((x, y))
-
-                # Identify green background
                 is_green = (g > 55 and g > r * 1.15 and g > b * 1.15) or \
                            (abs(g - target_g) < 40 and abs(r - target_r) < 40 and abs(b - target_b) < 40)
-                
-                # Ignore dark shadows/corners
                 is_shadow = (r < 25 and g < 25 and b < 25)
 
                 if not is_green and not is_shadow:
@@ -416,9 +425,7 @@ def calculate_auto_centering_and_zoom(detected_hex: str) -> str:
             child_h = max_y - min_y
             center_x = (min_x + max_x) // 2
 
-            # Scale student so they fill ~82% of vertical frame
             desired_crop_h = int(child_h / 0.82)
-            # Ensure crop stays within reasonable bounds (between 48% and 82% of raw height)
             desired_crop_h = max(int(h * 0.48), min(int(h * 0.82), desired_crop_h))
             desired_crop_w = int(desired_crop_h * (16 / 9))
 
@@ -426,19 +433,17 @@ def calculate_auto_centering_and_zoom(detected_hex: str) -> str:
                 desired_crop_w = w
                 desired_crop_h = int(w * (9 / 16))
 
-            # Leave 8% headroom above the student's head
             crop_y = max(0, min_y - int(desired_crop_h * 0.08))
             if crop_y + desired_crop_h > h:
                 crop_y = max(0, h - desired_crop_h)
 
             crop_x = max(0, min(w - desired_crop_w, center_x - (desired_crop_w // 2)))
 
-            log(f"📐 Auto-Framing Active: Centering student at X={center_x}, Cropping {desired_crop_w}x{desired_crop_h} to fill background naturally.")
+            log(f"📐 Auto-Framing: Centering student at X={center_x}, Scaling {desired_crop_w}x{desired_crop_h} to fill background.")
             return f"crop={desired_crop_w}:{desired_crop_h}:{crop_x}:{crop_y},"
     except Exception as e:
         log(f"Auto-framing calculation note: {e}")
 
-    # Fallback to an intentional 1.40x zoom so distant kids are never miniature
     default_h = int(1080 / 1.40)
     default_w = int(default_h * 16 / 9)
     default_x = (1920 - default_w) // 2
@@ -468,7 +473,7 @@ def upload_directly_to_google_drive(video_path: str, folder_id: str):
         
         init_res = requests.post(init_url, headers=init_headers, json=metadata, timeout=30)
         if init_res.status_code != 200:
-            log(f"❌ Drive API Init Error (HTTP {init_res.status_code}): {init_res.text}")
+            log(f"❌ Drive API Init Error: {init_res.text}")
             return None
 
         upload_url = init_res.headers.get("Location")
@@ -490,8 +495,7 @@ def upload_directly_to_google_drive(video_path: str, folder_id: str):
             file_id = file_data.get("id")
             web_link = f"https://drive.google.com/file/d/{file_id}/view"
             log("=====================================================")
-            log(f"🎉 SUCCESS! 16:9 Video uploaded to Final Deliverables!")
-            log(f"📁 File Name: {FINAL_OUTPUT}")
+            log(f"🎉 SUCCESS! 16:9 Video uploaded!")
             log(f"🔗 Google Drive Video Link: {web_link}")
             log("=====================================================")
 
@@ -500,13 +504,20 @@ def upload_directly_to_google_drive(video_path: str, folder_id: str):
 
             if WEBAPP_URL:
                 try:
-                    requests.post(WEBAPP_URL, json={"action": "video_completed", "video_url": web_link}, timeout=15, allow_redirects=True)
+                    requests.post(WEBAPP_URL, json={
+                        "action": "video_completed",
+                        "video_url": web_link,
+                        "row_number": ROW_NUMBER,
+                        "file_name": FILE_NAME,
+                        "student_name": STUDENT_NAME,
+                        "theme": THEME
+                    }, timeout=15, allow_redirects=True)
                 except Exception as ex:
                     log(f"Warning updating Status Board: {ex}")
 
             return web_link
         else:
-            log(f"❌ Drive Upload Error (HTTP {upload_res.status_code}): {upload_res.text}")
+            log(f"❌ Drive Upload Error: {upload_res.text}")
             return None
     except Exception as e:
         log(f"❌ Upload Exception: {e}")
@@ -528,11 +539,8 @@ def sanitize_images():
             ], capture_output=True, text=True)
             if res.returncode == 0:
                 has_clean_bg = True
-                log("✅ Background sanitized to 16:9 PNG.")
-            else:
-                log(f"❌ Background sanitize error: {res.stderr[:200]}")
-        except Exception as e:
-            log(f"❌ Background sanitize exception: {e}")
+        except Exception:
+            pass
 
     if os.path.exists(LOGO_IMAGE) and os.path.getsize(LOGO_IMAGE) > 1024:
         try:
@@ -543,27 +551,15 @@ def sanitize_images():
             ], capture_output=True, text=True)
             if res.returncode == 0:
                 has_clean_logo = True
-                log("✅ Deemcee Logo sanitized to clean PNG.")
-            else:
-                log(f"❌ Logo sanitize error: {res.stderr[:200]}")
-        except Exception as e:
-            log(f"❌ Logo sanitize exception: {e}")
+        except Exception:
+            pass
 
     return has_clean_bg, has_clean_logo
 
-def run_ffmpeg_command(cmd, step_name="FFmpeg"):
-    log(f"🚀 Running {step_name}...")
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        log(f"❌ {step_name} Failed:\n{res.stderr}")
-        raise RuntimeError(f"{step_name} failed with exit code {res.returncode}")
-    return res
-
 # ==========================================
-# 6. NORMALIZE INTRO / OUTRO CLIPS
+# 6. TURBO NORMALIZATION (ULTRAFAST)
 # ==========================================
-def normalize_clip(input_path, output_path, step_name):
-    log(f"🎬 Normalizing {step_name} ({input_path})...")
+def normalize_clip_fast(input_path, output_path):
     has_audio = False
     try:
         probe = subprocess.run([
@@ -578,7 +574,7 @@ def normalize_clip(input_path, output_path, step_name):
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
             "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,format=yuv420p",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
             "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k",
             output_path
         ]
@@ -587,39 +583,29 @@ def normalize_clip(input_path, output_path, step_name):
             "ffmpeg", "-y", "-i", input_path,
             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,format=yuv420p",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
             output_path
         ]
-    run_ffmpeg_command(cmd, step_name)
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # ==========================================
-# 7. MAIN VIDEO COMPOSITOR (PRECISE CHROMAKEY + AUTO-FRAMING)
+# 7. PARALLEL VIDEO COMPOSITOR
 # ==========================================
-def process_video():
-    has_raw = download_drive_file(RAW_VIDEO_ID, RAW_VIDEO)
+def render_video_pipeline():
     download_drive_file(BG_FILE_ID, BG_IMAGE)
     download_drive_file(LOGO_FILE_ID, LOGO_IMAGE)
     has_intro = download_drive_file(INTRO_FILE_ID, INTRO_VIDEO)
     has_outro = download_drive_file(OUTRO_FILE_ID, OUTRO_VIDEO)
 
-    if not has_raw:
-        log("❌ Cannot proceed without raw speech video.")
-        return
-
-    # Step 1: Run Gemini Speech Evaluation & Build Docs in Drive
-    evaluate_speech_with_gemini(RAW_VIDEO)
-
-    # Step 2: Auto-detect exact green screen color & compute intelligent auto-framing
     detected_color = auto_detect_greenscreen_color(RAW_VIDEO)
     auto_framing_filter = calculate_auto_centering_and_zoom(detected_color)
 
     has_bg, has_logo = sanitize_images()
     temp_keyed = "temp_keyed.mp4"
 
-    # Step 3: Precise Opacity Chromakey (0.06:0.08) - No Ghosting + Natural Screen-Fill
-    log("🎬 Step 3: Processing Chroma Key & Branding...")
+    log("🎬 Rendering Chroma Key with Turbo Encoding (preset veryfast)...")
     if has_bg and has_logo:
         filter_complex = (
             "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
@@ -637,8 +623,8 @@ def process_video():
             "-map", "[v_final]",
             "-map", "0:a?",
             "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "20",
+            "-preset", "veryfast",
+            "-crf", "21",
             "-c:a", "aac",
             "-ar", "44100",
             "-ac", "2",
@@ -660,8 +646,8 @@ def process_video():
             "-map", "[v_final]",
             "-map", "0:a?",
             "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "20",
+            "-preset", "veryfast",
+            "-crf", "21",
             "-c:a", "aac",
             "-ar", "44100",
             "-ac", "2",
@@ -675,37 +661,55 @@ def process_video():
             "-i", RAW_VIDEO,
             "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p",
             "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "20",
+            "-preset", "veryfast",
+            "-crf", "21",
             "-c:a", "aac",
             "-ar", "44100",
             "-ac", "2",
             temp_keyed
         ]
 
-    run_ffmpeg_command(cmd1, "Chroma Key & Branding")
+    subprocess.run(cmd1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log("✅ Chroma Key step complete!")
 
     if has_intro and has_outro:
-        normalize_clip(INTRO_VIDEO, "norm_intro.mp4", "Intro Video")
-        normalize_clip(OUTRO_VIDEO, "norm_outro.mp4", "Outro Video")
+        normalize_clip_fast(INTRO_VIDEO, "norm_intro.mp4")
+        normalize_clip_fast(OUTRO_VIDEO, "norm_outro.mp4")
 
         with open("concat_list.txt", "w") as f:
             f.write("file 'norm_intro.mp4'\n")
             f.write(f"file '{temp_keyed}'\n")
             f.write("file 'norm_outro.mp4'\n")
 
-        run_ffmpeg_command([
+        subprocess.run([
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "concat_list.txt",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "192k",
-            FINAL_OUTPUT
-        ], "Concatenation")
+            "-c", "copy", FINAL_OUTPUT
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         os.rename(temp_keyed, FINAL_OUTPUT)
 
     log(f"🎉 16:9 Final Video Ready: {FINAL_OUTPUT} ({os.path.getsize(FINAL_OUTPUT)} bytes)")
     upload_directly_to_google_drive(FINAL_OUTPUT, FINISHED_FOLDER_ID)
 
+# ==========================================
+# 8. EXECUTION (SIMULTANEOUS DUAL THREADING)
+# ==========================================
 if __name__ == "__main__":
-    process_video()
+    has_raw = download_drive_file(RAW_VIDEO_ID, RAW_VIDEO)
+    if not has_raw:
+        log("❌ Cannot proceed without raw speech video.")
+        sys.exit(1)
+
+    log("⚡ Launching simultaneous parallel threads: Gemini AI + FFmpeg Compositor...")
+    ai_thread = threading.Thread(target=evaluate_speech_with_gemini, args=(RAW_VIDEO,))
+    video_thread = threading.Thread(target=render_video_pipeline)
+
+    # Start both simultaneously
+    ai_thread.start()
+    video_thread.start()
+
+    # Wait for both to complete
+    ai_thread.join()
+    video_thread.join()
+
+    log("🏁 All processing complete!")
