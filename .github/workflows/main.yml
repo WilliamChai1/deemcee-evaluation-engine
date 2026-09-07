@@ -38,4 +38,6 @@ jobs:
           OUTRO_FILE_ID: ${{ github.event.client_payload.outro_file_id }}
           FINISHED_FOLDER_ID: ${{ github.event.client_payload.finished_folder_id }}
           DRIVE_TOKEN: ${{ github.event.client_payload.drive_token }}
+          ROW_NUMBER: ${{ github.event.client_payload.row_number }}
+          FILE_NAME: ${{ github.event.client_payload.file_name }}
         run: python process_video.py
