@@ -65,7 +65,7 @@ def download_drive_file(file_id: str, dest_path: str):
         return False
 
 # ==========================================
-# 2. OFFICIAL DEEMCEE 1-3 POINT EVALUATION ENGINE
+# 2. OFFICIAL DEEMCEE 1-3 POINT EVALUATION ENGINE (AEM FORMAT)
 # ==========================================
 MASTER_CRITERIA = {
     "Body Actions": {
@@ -192,25 +192,32 @@ Task: Rigorously evaluate speech performance for {student} (Grade {grade_num}, T
 OFFICIAL 1-3 POINT SCORING RUBRIC FOR GRADE {grade_num}:
 {rubric_text}
 
-SCORING INSTRUCTIONS:
-1. Score EVERY element strictly as 1, 2, or 3 points based on the explicit criteria above. No half-points.
-2. In the "feedback" field, you MUST provide precise timestamp evidence (e.g., "@ 0:24 - ...") explaining why the student earned a 1, 2, or 3.
-3. Calculate "totalScore" by summing the scores of all {len(elements)} elements. Max score is {max_score}.
+SCORING RULES:
+1. Score EVERY element strictly as 1, 2, or 3 points based on the explicit criteria above.
+2. In the "feedback" field, you MUST provide precise timestamp evidence (e.g., "@ 0:18 - ...") explaining why the student earned a 1, 2, or 3.
+3. Calculate "totalScore" by summing the scores of all {len(elements)} elements (Max: {max_score}).
 4. "advanceRecommendation": Set strictly to "Yes" if totalScore >= {pass_threshold}, otherwise "Needs Practice".
-5. Provide a warm, empowering summary and a 2-step actionable Kaizen growth plan.
-6. Create an engaging bilingual (English & Chinese) social media caption highlighting their strongest elements.
+5. Provide an empowering summary and a 2-step actionable Kaizen growth plan.
 
-Respond strictly in valid JSON matching this structure:
+SOCIAL MEDIA CAPTION RULES (STRICT AEM FORMAT):
+You must craft a detailed, encouraging, bilingual (English & Chinese) social media caption structured exactly in the Deemcee AEM Format:
+- [A - Acknowledge]: Celebrate {student} taking the stage to embody their theme "{theme}" with courage and enthusiasm.
+- [E - Encourage]: Identify the student's top-scoring elements (MAXIMUM 5 ELEMENTS). Detail exactly what they did well in each element with timestamp evidence from their performance.
+- [M - Motivate]: Inspire {student} to keep shining and cultivating their public speaking superpower.
+- End the caption with the official hashtags:
+{DEEMCEE_HASHTAGS}
+
+Respond strictly in valid JSON matching:
 {{
   "studentName": "{student}",
   "gradeLevel": "Grade {grade_num}",
   "speechTheme": "{theme}",
-  "encouragingSummary": "Empowering feedback with timestamp highlights",
+  "encouragingSummary": "Empowering summary with timestamps",
   "elements": [
     {{
       "elementName": "Body Actions",
       "score": 3,
-      "feedback": "Shows very energetic physical gestures when describing the airplane @ 0:18."
+      "feedback": "Feedback with timestamp evidence @ 0:18"
     }}
   ],
   "totalScore": {pass_threshold + 2},
@@ -220,7 +227,7 @@ Respond strictly in valid JSON matching this structure:
     "Tip 1: ...",
     "Tip 2: ..."
   ],
-  "socialMediaCaption": "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} ✈️\\n\\n[Bilingual AEM body]\\n\\n{DEEMCEE_HASHTAGS}"
+  "socialMediaCaption": "🌟 Grade {grade_num} Video Assignment 🌟 - I am a {theme} 🎙️✨\\n\\n[A - Acknowledge paragraph in EN & CN]\\n\\n[E - Detailed Encourage breakdown of max 5 top elements with timestamps in EN & CN]\\n\\n[M - Motivate closing in EN & CN]\\n\\n{DEEMCEE_HASHTAGS}"
 }}"""
     return prompt
 
@@ -273,7 +280,7 @@ def evaluate_speech_with_gemini(video_path: str):
                 "role": "user",
                 "parts": [
                     {"file_data": {"mime_type": "video/mp4", "file_uri": video_uri}},
-                    {"text": "Evaluate speech against Deemcee 1-3 point rubric and return JSON only."}
+                    {"text": "Evaluate speech against Deemcee standards and produce AEM social media caption."}
                 ]
             }],
             "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
@@ -282,7 +289,7 @@ def evaluate_speech_with_gemini(video_path: str):
         gen_res = requests.post(gen_url, json=payload).json()
         eval_json_text = gen_res["candidates"][0]["content"]["parts"][0]["text"]
         eval_data = json.loads(eval_json_text)
-        log("✅ Deemcee 1-3 Point Evaluation & Social Caption complete!")
+        log("✅ Deemcee AEM Evaluation & Caption complete!")
 
         if WEBAPP_URL:
             try:
@@ -304,7 +311,7 @@ def evaluate_speech_with_gemini(video_path: str):
         return None
 
 # ==========================================
-# 3. AUTO-DETECT EXACT GREEN SCREEN COLOR
+# 3. AUTO-DETECT GREEN SCREEN & SMART AUTO-FRAMING
 # ==========================================
 def auto_detect_greenscreen_color(video_path: str) -> str:
     log("🔍 Step 2: Analyzing video to auto-detect exact green screen color...")
@@ -353,6 +360,62 @@ def auto_detect_greenscreen_color(video_path: str) -> str:
     except Exception as e:
         log(f"Auto-detect note: {e}")
         return "0x00B800"
+
+def calculate_auto_centering_and_zoom(detected_hex: str) -> str:
+    """Detects child's position and sizes them to ~68% of screen height in center."""
+    if not os.path.exists(SAMPLE_FRAME):
+        return ""
+    try:
+        img = Image.open(SAMPLE_FRAME).convert("RGB")
+        w, h = img.size
+
+        target_r = int(detected_hex[2:4], 16)
+        target_g = int(detected_hex[4:6], 16)
+        target_b = int(detected_hex[6:8], 16)
+
+        non_green_x = []
+        non_green_y = []
+
+        for y in range(0, h, 6):
+            for x in range(0, w, 6):
+                r, g, b = img.getpixel((x, y))
+                is_green = (g > r * 1.15 and g > b * 1.15) or (abs(g - target_g) < 30 and abs(r - target_r) < 30 and abs(b - target_b) < 30)
+                if not is_green:
+                    non_green_x.append(x)
+                    non_green_y.append(y)
+
+        if len(non_green_x) > 150:
+            non_green_x.sort()
+            non_green_y.sort()
+            min_x = non_green_x[int(len(non_green_x) * 0.03)]
+            max_x = non_green_x[int(len(non_green_x) * 0.97)]
+            min_y = non_green_y[int(len(non_green_y) * 0.02)]
+            max_y = non_green_y[int(len(non_green_y) * 0.98)]
+
+            child_w = max_x - min_x
+            child_h = max_y - min_y
+            center_x = (min_x + max_x) // 2
+
+            # Standardize child height to ~68% of frame height
+            desired_crop_h = int(child_h / 0.68)
+            desired_crop_h = min(h, max(desired_crop_h, int(h * 0.55)))
+            desired_crop_w = int(desired_crop_h * (16 / 9))
+
+            if desired_crop_w > w:
+                desired_crop_w = w
+                desired_crop_h = int(w * (9 / 16))
+
+            crop_y = max(0, min_y - int(desired_crop_h * 0.12))
+            if crop_y + desired_crop_h > h:
+                crop_y = max(0, h - desired_crop_h)
+
+            crop_x = max(0, min(w - desired_crop_w, center_x - (desired_crop_w // 2)))
+
+            log(f"📐 Auto-Framing: Centering student at X={center_x}, Cropping {desired_crop_w}x{desired_crop_h} to scale size up naturally.")
+            return f"crop={desired_crop_w}:{desired_crop_h}:{crop_x}:{crop_y},"
+    except Exception as e:
+        log(f"Auto-framing calculation note: {e}")
+    return ""
 
 # ==========================================
 # 4. UPLOAD FINAL 16:9 VIDEO TO GOOGLE DRIVE
@@ -504,7 +567,7 @@ def normalize_clip(input_path, output_path, step_name):
     run_ffmpeg_command(cmd, step_name)
 
 # ==========================================
-# 7. MAIN VIDEO COMPOSITOR
+# 7. MAIN VIDEO COMPOSITOR (PRECISE CHROMAKEY + AUTO-FRAMING)
 # ==========================================
 def process_video():
     has_raw = download_drive_file(RAW_VIDEO_ID, RAW_VIDEO)
@@ -517,16 +580,22 @@ def process_video():
         log("❌ Cannot proceed without raw speech video.")
         return
 
+    # Step 1: Run Gemini Speech Evaluation & Build Docs in Drive
     evaluate_speech_with_gemini(RAW_VIDEO)
+
+    # Step 2: Auto-detect exact green screen color & compute intelligent auto-framing
     detected_color = auto_detect_greenscreen_color(RAW_VIDEO)
+    auto_framing_filter = calculate_auto_centering_and_zoom(detected_color)
+
     has_bg, has_logo = sanitize_images()
     temp_keyed = "temp_keyed.mp4"
 
-    log("🎬 Step 3: Processing YUV Chroma Key & Branding...")
+    # Step 3: Precise Opacity Chromakey (0.06:0.08) - No Ghosting + Centered & Scaled Student
+    log("🎬 Step 3: Processing Chroma Key & Branding...")
     if has_bg and has_logo:
         filter_complex = (
             "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
-            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={detected_color}:0.16:0.04,despill=green,format=yuva420p,fps=30[fg];"
+            f"[0:v]{auto_framing_filter}scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={detected_color}:0.06:0.08,despill=green,format=yuva420p,fps=30[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)[keyed];"
             "[2:v]scale=240:-1,format=yuva420p[logo];"
             "[keyed][logo]overlay=main_w-overlay_w-30:30[v_final]"
@@ -552,7 +621,7 @@ def process_video():
     elif has_bg:
         filter_complex = (
             "[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[bg];"
-            f"[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={detected_color}:0.16:0.04,despill=green,format=yuva420p,fps=30[fg];"
+            f"[0:v]{auto_framing_filter}scale=1920:1080:force_original_aspect_ratio=decrease,chromakey={detected_color}:0.06:0.08,despill=green,format=yuva420p,fps=30[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)[v_final]"
         )
         cmd1 = [
