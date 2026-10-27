@@ -282,15 +282,31 @@ def evaluate_speech_with_gemini(video_path: str):
         video_name = file_data["file"]["name"]
 
         check_url = f"https://generativelanguage.googleapis.com/v1beta/{video_name}?key={GEMINI_API_KEY}"
-        for _ in range(25):
+        is_active = False
+        for attempt in range(40):
             time.sleep(3)
             chk = requests.get(check_url).json()
-            if chk.get("state") == "ACTIVE":
+            state = chk.get("state")
+            if state == "ACTIVE":
+                is_active = True
                 break
+            elif state == "FAILED":
+                log(f"❌ Gemini File API Processing Failed: {chk}")
+                break
+            log(f"⏳ Waiting for Gemini video processing ({attempt+1}/40, state: {state})...")
+
+        if not is_active:
+            log("❌ Gemini video file was not ready in time.")
+            return None
 
         system_instruction = build_evaluation_prompt(GRADE_LEVEL, STUDENT_NAME, THEME)
+        candidate_models = [
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash"
+        ]
 
-        gen_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction}]},
             "contents": [{
@@ -303,9 +319,42 @@ def evaluate_speech_with_gemini(video_path: str):
             "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
         }
 
-        gen_res = requests.post(gen_url, json=payload).json()
-        eval_json_text = gen_res["candidates"][0]["content"]["parts"][0]["text"]
-        eval_data = json.loads(eval_json_text)
+        eval_data = None
+        for model in candidate_models:
+            gen_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            log(f"🤖 Attempting evaluation with model: {model}...")
+            try:
+                gen_res = requests.post(gen_url, json=payload, timeout=90).json()
+                if "candidates" in gen_res and len(gen_res["candidates"]) > 0:
+                    raw_text = gen_res["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    if raw_text.startswith("```"):
+                        raw_text = raw_text.split("\n", 1)[-1]
+                        if raw_text.endswith("```"):
+                            raw_text = raw_text.rsplit("```", 1)[0]
+                    eval_data = json.loads(raw_text.strip())
+                    log(f"✅ Success with {model}!")
+                    break
+                else:
+                    log(f"⚠️ Model {model} response did not contain candidates: {JSON.stringify(gen_res).slice(0, 150)}")
+            except Exception as model_err:
+                log(f"⚠️ Error with model {model}: {model_err}")
+
+        if not eval_data:
+            log("❌ All Gemini candidate models failed to generate evaluation data.")
+            if WEBAPP_URL:
+                try:
+                    requests.post(WEBAPP_URL, json={
+                        "action": "process_failed",
+                        "student_name": STUDENT_NAME,
+                        "theme": THEME,
+                        "row_number": ROW_NUMBER,
+                        "file_name": FILE_NAME,
+                        "error": "Gemini AI evaluation failed on all models."
+                    }, timeout=15)
+                except Exception:
+                    pass
+            return None
+
         log("✅ Deemcee Natural Evaluation & Caption complete!")
 
         if WEBAPP_URL:
@@ -327,6 +376,18 @@ def evaluate_speech_with_gemini(video_path: str):
 
     except Exception as e:
         log(f"Evaluation error: {e}")
+        if WEBAPP_URL:
+            try:
+                requests.post(WEBAPP_URL, json={
+                    "action": "process_failed",
+                    "student_name": STUDENT_NAME,
+                    "theme": THEME,
+                    "row_number": ROW_NUMBER,
+                    "file_name": FILE_NAME,
+                    "error": str(e)
+                }, timeout=15)
+            except Exception:
+                pass
         return None
 
 # ==========================================
