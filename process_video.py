@@ -21,7 +21,7 @@ OUTRO_FILE_ID = os.environ.get("OUTRO_FILE_ID", "").strip()
 DRIVE_TOKEN = os.environ.get("DRIVE_TOKEN", "").strip()
 FINISHED_FOLDER_ID = os.environ.get("FINISHED_FOLDER_ID", "").strip() or "1yZ374vWosaiBwCp3RiWq1IjsVW7sDJAr"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-WEBAPP_URL = os.environ.get("WEBAPP_URL", "").strip()
+WEBAPP_URL = os.environ.get("WEBAPP_URL", "").strip() or "https://script.google.com/macros/s/AKfycbyBSi1yBQ1Cvy4cTxNOEa68GsozstpNThb0Ri8bSJA1CpExgkU5cykzbECx43bOd5yC/exec"
 ROW_NUMBER = os.environ.get("ROW_NUMBER", "").strip()
 FILE_NAME = os.environ.get("FILE_NAME", "").strip()
 
