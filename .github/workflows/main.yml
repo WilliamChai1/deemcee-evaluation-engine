@@ -19,8 +19,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Verify FFmpeg
-        run: ffmpeg -version
+      - name: Setup FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: 'release'
 
       - name: Install Dependencies
         run: pip install requests pillow
@@ -42,3 +44,10 @@ jobs:
           ROW_NUMBER: ${{ github.event.client_payload.row_number }}
           FILE_NAME: ${{ github.event.client_payload.file_name }}
         run: python process_video.py
+
+      - name: Report Failure to Status Board
+        if: failure()
+        run: |
+          curl -X POST "${{ github.event.client_payload.webapp_url || 'https://script.google.com/macros/s/AKfycbyBSi1yBQ1Cvy4cTxNOEa68GsozstpNThb0Ri8bSJA1CpExgkU5cykzbECx43bOd5yC/exec' }}" \
+            -H "Content-Type: text/plain;charset=utf-8" \
+            -d "{\"action\":\"process_failed\",\"row_number\":\"${{ github.event.client_payload.row_number }}\",\"error\":\"GitHub Actions runner failed during video processing\"}"
