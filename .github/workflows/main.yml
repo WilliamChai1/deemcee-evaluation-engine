@@ -27,7 +27,7 @@ jobs:
       - name: Run Video Processor
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
+          WEBAPP_URL: ${{ github.event.client_payload.webapp_url || 'https://script.google.com/macros/s/AKfycbyBSi1yBQ1Cvy4cTxNOEa68GsozstpNThb0Ri8bSJA1CpExgkU5cykzbECx43bOd5yC/exec' }}
           STUDENT_NAME: ${{ github.event.client_payload.student_name }}
           THEME: ${{ github.event.client_payload.theme }}
           GRADE_LEVEL: ${{ github.event.client_payload.grade_level }}
